@@ -1618,21 +1618,21 @@ function renderSidebar() {
         <div class="logo">
             <span style="color: var(--accent-primary); font-weight: 900; letter-spacing: 1px;">TRADEJOURNAL</span>
         </div>
-        <button class="btn-primary" style="margin-bottom: 1rem; width: 100%;" onclick="openModal()">
+        <button class="btn-primary" style="margin-bottom: 2rem; width: 100%;" onclick="openModal()">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 8px;">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
             Add Trade
         </button>
+        <nav class="nav-links">${navHtml}</nav>
         <div class="data-backup-panel">
             <div class="data-backup-header">Phone sync</div>
             <button type="button" class="data-backup-btn data-backup-btn--primary" onclick="pushJournalToGithub()">Sync to Phone</button>
             <button type="button" class="data-backup-btn" onclick="pullJournalFromGithub()">Pull Latest</button>
             <input type="file" id="journalImportInput" accept=".json,application/json" style="display:none;" onchange="handleJournalImport(event)">
-            <p class="data-backup-hint">PC: Sync to Phone after trades. Phone: Pull Latest.</p>
+            <p class="data-backup-hint">PC: tap Sync to Phone after adding trades. Phone: tap Pull Latest (or refresh).</p>
         </div>
-        <nav class="nav-links">${navHtml}</nav>
         <div style="margin-top: auto;">
             <a href="#" class="nav-item" onclick="openSettings(); return false;">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
