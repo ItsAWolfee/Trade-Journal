@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategies - TradeJournal Pro</title>
+    <link rel="stylesheet" href="/CSS/trade.css">
+    <link rel="stylesheet" href="../CSS/trade.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="dashboard-body">
+    <aside class="sidebar">
+        <div class="logo">
+            <span style="color: var(--accent-primary); font-weight: 900; letter-spacing: 1px;">TRADEJOURNAL</span>
+        </div>
+        <nav class="nav-links">
+            <a href="dashboard.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                <span>Dashboard</span>
+            </a>
+            <a href="day-view.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" x2="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                <span>Day View</span>
+            </a>
+            <a href="trade-view.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+                <span>Trade View</span>
+            </a>
+            <a href="reports.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+                <span>Reports</span>
+            </a>
+            <div style="height: 1px; background: var(--border); margin: 1rem 0;"></div>
+            <a href="trade-replay.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/></svg>
+                <span>Trade Replay</span>
+            </a>
+            <a href="progress-tracker.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                <span>Progress Tracker</span>
+            </a>
+            <a href="resources.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/></svg>
+                <span>Resources</span>
+            </a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header class="top-header">
+            <h1>Trading Strategies</h1>
+            <button class="btn-primary">+ New Strategy</button>
+        </header>
+
+        <section style="margin-top: 1.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+            <!-- PBInesting Strategy Card -->
+            <div class="journal-card" style="margin-bottom: 0;">
+                <div class="journal-header">
+                    <span class="journal-date" style="font-size: 1.2rem; color: var(--accent-primary);">PBInesting</span>
+                    <span class="journal-profit" style="color: var(--profit-green);">72% Win Rate</span>
+                </div>
+                <div class="journal-body">
+                    <p style="margin-bottom: 1rem;">Core Execution Logic for Stock Options:</p>
+                    <div style="background: rgba(0, 242, 254, 0.05); padding: 1rem; border-radius: 8px; border-left: 3px solid var(--accent-primary);">
+                        <strong style="color: white; display: block; margin-bottom: 0.5rem;">CALL Criteria:</strong>
+                        <ul style="list-style: disc; margin-left: 1.2rem; display: flex; flex-direction: column; gap: 0.4rem;">
+                            <li>Price holds above <strong>Pre-Market High (PMH)</strong></li>
+                            <li>Price <strong>Retests VWAP</strong> and bounces off for higher continuation.</li>
+                        </ul>
+                    </div>
+                    <div style="background: rgba(255, 77, 77, 0.05); padding: 1rem; border-radius: 8px; border-left: 3px solid var(--loss-red); margin-top: 1rem;">
+                        <strong style="color: white; display: block; margin-bottom: 0.5rem;">PUT Criteria:</strong>
+                        <ul style="list-style: disc; margin-left: 1.2rem; display: flex; flex-direction: column; gap: 0.4rem;">
+                            <li>Price holds below <strong>Pre-Market High (PMH)</strong></li>
+                            <li>Price <strong>Retests VWAP</strong> from below and gets rejected for lower lows.</li>
+                        </ul>
+                    </div>
+                </div>
+                <div style="margin-top: 1.5rem; display: flex; gap: 0.5rem;">
+                    <button class="btn-secondary">View Performance</button>
+                    <button class="btn-secondary">Edit Rules</button>
+                </div>
+            </div>
+
+            <!-- Performance Card -->
+            <div class="journal-card" style="margin-bottom: 0; display: flex; flex-direction: column;">
+                <div class="journal-header">
+                    <span class="journal-date">Strategy Performance</span>
+                </div>
+                <div style="flex: 1; min-height: 200px; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: center;">
+                    <section class="chart-container" style="height: 200px; padding: 0;">
+                        <canvas id="stratChart"></canvas>
+                    </section>
+                    <div style="display: flex; flex-direction: column; gap: 1rem;">
+                        <div>
+                            <span style="color: var(--text-muted); font-size: 0.8rem;">Average Reward to Risk</span>
+                            <div style="font-size: 1.5rem; font-weight: 700;">2.4:1</div>
+                        </div>
+                        <div>
+                            <span style="color: var(--text-muted); font-size: 0.8rem;">Consecutive Wins</span>
+                            <div style="font-size: 1.5rem; font-weight: 700; color: var(--profit-green);">8</div>
+                        </div>
+                    </div>
+                </div>
+                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                    <small style="color: var(--text-muted);">This strategy performs best on high-relative volume (RV) stocks like TSLA and NVDA during the first hour of trading.</small>
+                </div>
+            </div>
+        </section>
+
+        <!-- Other Strategy Placeholders -->
+        <section style="margin-top: 2rem;">
+            <h3 style="margin-bottom: 1rem; font-size: 1.1rem; color: var(--text-muted);">Additional Strategies</h3>
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem;">
+                <div class="journal-card" style="opacity: 0.6; padding: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <strong>Mean Reversion</strong>
+                        <span style="font-size: 0.7rem; background: var(--bg-main); padding: 2px 8px; border-radius: 10px;">DRAFT</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">Tracking Bollinger Band and RSI deviations for overextended plays.</div>
+                </div>
+                <div class="journal-card" style="opacity: 0.6; padding: 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <strong>VWAP Scalp</strong>
+                        <span style="font-size: 0.7rem; background: var(--bg-main); padding: 2px 8px; border-radius: 10px;">DRAFT</span>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">Quick momentum scalps based on VWAP-Price crossing.</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        const ctx = document.getElementById('stratChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: ['Win Rate', 'Profitability', 'Consistency', 'Risk/Reward', 'Confidence'],
+                datasets: [{
+                    data: [72, 85, 78, 90, 95],
+                    borderColor: '#00f2fe',
+                    backgroundColor: 'rgba(0, 242, 254, 0.2)',
+                    pointBackgroundColor: '#00f2fe',
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    r: {
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        angleLines: { color: 'rgba(255,255,255,0.1)' },
+                        ticks: { display: false },
+                        suggestedMin: 0,
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+    </script>
+    <!-- Custom Notification/Prompt Modal -->
+    <div id="notificationModal" class="notification-modal">
+        <div class="notification-content">
+            <div id="notificationIcon" class="notification-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            </div>
+            <h3 id="notificationTitle" class="notification-title">Notification</h3>
+            <p id="notificationMessage" class="notification-message">This is a message.</p>
+            <input type="text" id="notificationInput" class="notification-input" style="display: none;">
+            <div id="notificationButtons" class="notification-buttons">
+                <button id="notificationCancel" class="notification-btn secondary" style="display: none;">Cancel</button>
+                <button id="notificationConfirm" class="notification-btn primary">OK</button>
+            </div>
+        </div>
+    </div>
+    <script src="../JS/trade_logic.js"></script>
+</body>
+</html>

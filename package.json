@@ -1,0 +1,38 @@
+{
+  "name": "trade-journal",
+  "version": "1.0.0",
+  "description": "Trade Journal desktop app",
+  "main": "main.js",
+  "scripts": {
+    "desktop": "electron .",
+    "build": "electron-builder --win portable",
+    "build:installer": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.tradejournal.app",
+    "productName": "Trade Journal",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "HTML/**/*",
+      "CSS/**/*",
+      "JS/**/*",
+      "Images/**/*"
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "Images/PGTLogo.png"
+    },
+    "portable": {
+      "artifactName": "TradeJournal-Portable.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^41.1.0",
+    "electron-builder": "^25.1.8"
+  }
+}

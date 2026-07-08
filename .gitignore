@@ -1,0 +1,11 @@
+# Secrets / environment
+/.env
+
+# Dependencies
+node_modules
+
+# Electron build output
+dist
+
+# Local app data (per-machine saved trades, etc.)
+app-data

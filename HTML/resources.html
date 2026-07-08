@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Resources - TradeJournal Pro</title>
+    <link rel="stylesheet" href="../CSS/trade.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dashboard-body">
+    <aside class="sidebar">
+        <div class="logo">
+            <span style="color: var(--accent-primary); font-weight: 900; letter-spacing: 1px;">TRADEJOURNAL</span>
+        </div>
+        <nav class="nav-links">
+            <a href="dashboard.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                <span>Dashboard</span>
+            </a>
+            <a href="day-view.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                <span>Day View</span>
+            </a>
+            <a href="trade-view.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+                <span>Trade View</span>
+            </a>
+            <a href="reports.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg>
+                <span>Reports</span>
+            </a>
+             <div style="height: 1px; background: var(--border); margin: 1rem 0;"></div>
+            <a href="trade-replay.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/></svg>
+                <span>Trade Replay</span>
+            </a>
+            <a href="progress-tracker.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                <span>Progress Tracker</span>
+            </a>
+            <a href="resources.html" class="nav-item active">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/></svg>
+                <span>Resources</span>
+            </a>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header class="top-header">
+            <h1>Trading Resources</h1>
+            <p style="color: var(--text-muted);">Quick access to tools, brokerages, and educational materials.</p>
+        </header>
+
+        <section style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 2rem; margin-top: 2rem;">
+            <!-- Trading Tools -->
+            <div class="chart-container" style="height: auto; padding: 2rem;">
+                <h3 style="margin-bottom: 1.5rem; color: var(--accent-secondary); display: flex; align-items: center; gap: 10px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21 16-4 4-4-4"></path><path d="M17 20V4"></path><path d="m3 8 4-4 4 4"></path><path d="M7 4v16"></path></svg>
+                    Market Scanning & Analysis
+                </h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <a href="https://www.tradingview.com" target="_blank" class="stat-card" style="background: rgba(255,255,255,0.03); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid var(--border);">
+                        <div style="font-weight: 700; color: white;">TradingView</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);">Full Charting suite</div>
+                    </a>
+                    <a href="https://finviz.com" target="_blank" class="stat-card" style="background: rgba(255,255,255,0.03); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid var(--border);">
+                        <div style="font-weight: 700; color: white;">Finviz</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);">Market Screeners</div>
+                    </a>
+                    <a href="https://www.benzinga.com/pro" target="_blank" class="stat-card" style="background: rgba(255,255,255,0.03); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid var(--border);">
+                        <div style="font-weight: 700; color: white;">Benzinga Pro</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);">Real-time News</div>
+                    </a>
+                    <a href="https://www.briefing.com" target="_blank" class="stat-card" style="background: rgba(255,255,255,0.03); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid var(--border);">
+                        <div style="font-weight: 700; color: white;">Briefing.com</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted);">Market Intel</div>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Brokerage Access -->
+            <div class="chart-container" style="height: auto; padding: 2rem;">
+                <h3 style="margin-bottom: 1.5rem; color: var(--profit-green); display: flex; align-items: center; gap: 10px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2H2v10h20V2h-10z"></path><path d="M12 12v10"></path><path d="M2 22h20"></path></svg>
+                    Direct Broker Access
+                </h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <a href="https://www.schwab.com" target="_blank" class="stat-card" style="background: rgba(0, 240, 168, 0.05); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid rgba(0, 240, 168, 0.1);">
+                        <div style="font-weight: 700; color: white;">Thinkorswim</div>
+                        <div style="font-size: 0.7rem; color: var(--profit-green);">Schwab Platform</div>
+                    </a>
+                    <a href="https://tastytrade.com" target="_blank" class="stat-card" style="background: rgba(0, 240, 168, 0.05); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid rgba(0, 240, 168, 0.1);">
+                        <div style="font-weight: 700; color: white;">Tastytrade</div>
+                        <div style="font-size: 0.7rem; color: var(--profit-green);">Options Focused</div>
+                    </a>
+                    <a href="https://www.interactivebrokers.com" target="_blank" class="stat-card" style="background: rgba(0, 240, 168, 0.05); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid rgba(0, 240, 168, 0.1);">
+                        <div style="font-weight: 700; color: white;">IBKR</div>
+                        <div style="font-size: 0.7rem; color: var(--profit-green);">TWS Desktop</div>
+                    </a>
+                    <a href="https://www.etrade.com" target="_blank" class="stat-card" style="background: rgba(0, 240, 168, 0.05); text-decoration: none; display: flex; flex-direction: column; align-items: center; gap: 10px; border: 1px solid rgba(0, 240, 168, 0.1);">
+                        <div style="font-weight: 700; color: white;">E*TRADE</div>
+                        <div style="font-size: 0.7rem; color: var(--profit-green);">Power E*TRADE</div>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Risk Management -->
+            <div class="chart-container" style="height: auto; padding: 2rem;">
+                <h3 style="margin-bottom: 1.5rem; color: var(--accent-primary); display: flex; align-items: center; gap: 10px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                    Risk Management Center
+                </h3>
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                        <span style="color: var(--text-muted);">Position Sizing Rule:</span>
+                        <span style="color: white; font-weight: 700;">Max 1% Risk / Trade</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                        <span style="color: var(--text-muted);">Max Weekly Drawdown:</span>
+                        <span style="color: var(--loss-red); font-weight: 700;">-5.00%</span>
+                    </div>
+                    <div style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+                        <p style="font-size: 0.8rem; color: var(--text-muted); line-height: 1.6;">
+                            ⚠️ Remember: Consistency is found in risk management, not in strategy execution. Always adhere to your stop loss and never revenge trade.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Education Hub -->
+            <div class="chart-container" style="height: auto; padding: 2rem;">
+                <h3 style="margin-bottom: 1.5rem; color: var(--accent-secondary); display: flex; align-items: center; gap: 10px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"></path><path d="M6 12v5c3 3 9 3 12 0v-5"></path></svg>
+                    Strategy Education
+                </h3>
+                <div style="display: flex; flex-direction: column; gap: 1rem;">
+                    <div class="journal-card" style="padding: 1rem; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 700; color: white;">Mastering VWAP</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Execution Guide</div>
+                            </div>
+                            <button class="btn-secondary" style="font-size: 0.7rem; padding: 4px 10px;">View PDF</button>
+                        </div>
+                    </div>
+                    <div class="journal-card" style="padding: 1rem; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 700; color: white;">Options Greeks 101</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Dynamic Risk Module</div>
+                            </div>
+                            <button class="btn-secondary" style="font-size: 0.7rem; padding: 4px 10px;">Launch Course</button>
+                        </div>
+                    </div>
+                    <div class="journal-card" style="padding: 1rem; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 700; color: white;">Psychology of Loss</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Meditation & Focus</div>
+                            </div>
+                            <button class="btn-secondary" style="font-size: 0.7rem; padding: 4px 10px;">Practice</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        <section style="display: grid; grid-template-columns: 1fr; gap: 2rem; margin-top: 2rem;">
+            <!-- Interactive Trading Notes -->
+            <div class="notes-container">
+                <header class="notes-header">
+                    <div>
+                        <h2 style="margin-bottom: 5px; color: white;">Trading Notes & Strategy</h2>
+                        <p style="color: var(--text-muted); font-size: 0.9rem;">Click anywhere to edit your personal trading rules.</p>
+                    </div>
+                    <button class="btn-primary save-btn" id="saveNotesBtn">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 8px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+                        Save Notes
+                    </button>
+                </header>
+                <div id="tradingNotesArea" contenteditable="true">
+                    <!-- Loaded via resources_logic.js -->
+                    <div style="text-align: center; padding: 3rem; color: var(--text-muted);">Loading your notes...</div>
+                </div>
+            </div>
+
+            <!-- Cheat Sheets Gallery -->
+            <div>
+                <h2 style="margin-bottom: 1.5rem; color: white;">Flashcards & Cheat Sheets</h2>
+                <div class="cheat-sheets-grid">
+                    <div class="cheat-card">
+                        <img src="../Images/candlestick_patterns.png" alt="Candlestick Patterns">
+                        <div class="cheat-info">
+                            <h4 style="color: white; margin-bottom: 5px;">Candlestick Patterns</h4>
+                            <p style="color: var(--text-muted); font-size: 0.85rem;">Master price action at a glance.</p>
+                        </div>
+                    </div>
+                    <div class="cheat-card">
+                        <img src="../Images/chart_patterns.png" alt="Chart Patterns">
+                        <div class="cheat-info">
+                            <h4 style="color: white; margin-bottom: 5px;">Chart Formations</h4>
+                            <p style="color: var(--text-muted); font-size: 0.85rem;">Recognize key reversals and breakouts.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="../JS/trade_logic.js"></script>
+    <!-- Custom Notification/Prompt Modal -->
+    <div id="notificationModal" class="notification-modal">
+        <div class="notification-content">
+            <div id="notificationIcon" class="notification-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            </div>
+            <h3 id="notificationTitle" class="notification-title">Notification</h3>
+            <p id="notificationMessage" class="notification-message">This is a message.</p>
+            <input type="text" id="notificationInput" class="notification-input" style="display: none;">
+            <div id="notificationButtons" class="notification-buttons">
+                <button id="notificationCancel" class="notification-btn secondary" style="display: none;">Cancel</button>
+                <button id="notificationConfirm" class="notification-btn primary">OK</button>
+            </div>
+        </div>
+    </div>
+    <script src="../JS/resources_logic.js"></script>
+</body>
+</html>

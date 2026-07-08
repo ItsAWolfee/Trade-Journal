@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeJournal - Trading Dashboard</title>
+    <!-- Use Inter Font from Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../CSS/trade.css">
+    <!-- Chart.js for data visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- html2canvas for calendar screenshots -->
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+</head>
+
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="logo">
+            <span style="color: var(--accent-primary); font-weight: 900; letter-spacing: 1px;">TRADEJOURNAL</span>
+        </div>
+        <button class="btn-primary" style="margin-bottom: 2rem; width: 100%;" onclick="openModal()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"
+                style="margin-right: 8px;">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Add Trade
+        </button>
+        <nav class="nav-links">
+            <a href="dashboard.html" class="nav-item active">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                </svg>
+                <span>Dashboard</span>
+            </a>
+            <a href="day-view.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                </svg>
+                <span>Day View</span>
+            </a>
+            <a href="trade-view.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                    <path d="M2 17l10 5 10-5"></path>
+                    <path d="M2 12l10 5 10-5"></path>
+                </svg>
+                <span>Trade View</span>
+            </a>
+            <a href="reports.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                    <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+                </svg>
+                <span>Reports</span>
+            </a>
+            <div style="height: 1px; background: var(--border); margin: 1rem 0;"></div>
+            <a href="trade-replay.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <path d="m10 8 6 4-6 4z" />
+                </svg>
+                <span>Trade Replay</span>
+            </a>
+            <a href="progress-tracker.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M3 9h18" />
+                    <path d="M9 21V9" />
+                </svg>
+                <span>Progress Tracker</span>
+            </a>
+            <a href="resources.html" class="nav-item">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z" />
+                </svg>
+                <span>Resources</span>
+            </a>
+        </nav>
+        <div class="data-backup-panel">
+            <div class="data-backup-header">Move to another PC</div>
+            <button type="button" class="data-backup-btn" onclick="exportJournalData()">Export Data</button>
+            <button type="button" class="data-backup-btn" onclick="importJournalData()">Import Data</button>
+            <input type="file" id="journalImportInput" accept=".json,application/json" style="display:none;" onchange="handleJournalImport(event)">
+            <p class="data-backup-hint">Export before switching laptops, then import on the new one.</p>
+        </div>
+        <div style="margin-top: auto;">
+            <a href="#" class="nav-item">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings">
+                    <path
+                        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+                <span>Settings</span>
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <header class="header">
+            <div class="welcome-text">
+                <h1>Trading Dashboard</h1>
+                <p>Track, analyze, and optimize your trading performance.</p>
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <button class="btn-primary" onclick="openModal()">+ Add Trade</button>
+            </div>
+        </header>
+
+        <!-- Top Stats Row -->
+        <section class="stats-grid stats-grid--rich">
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Net P/L <span class="stat-info" data-tooltip="Your total profit or loss across all trades, after subtracting fees.">ⓘ</span></span>
+                    <span class="stat-badge" id="netPlTradeCount">0</span>
+                </div>
+                <div class="stat-rich-main">
+                    <span class="stat-value" id="totalNetPL">$0.00</span>
+                </div>
+                <span class="stat-sub" id="totalFeesSub">$0.00 TOS fees</span>
+            </div>
+
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Trade win %</span>
+                    <span class="stat-info" data-tooltip="The percentage of your individual trades that finished in profit.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="winRateDisplay">0%</span>
+                    <div class="stat-gauge-col">
+                        <div class="stat-gauge stat-gauge--semi" id="tradeWinGauge" aria-hidden="true"></div>
+                        <div class="stat-gauge-legend stat-gauge-legend--triple">
+                            <span class="legend-win" id="tradeWinsCount">0</span>
+                            <span class="legend-even" id="tradeBeCount">0</span>
+                            <span class="legend-loss" id="tradeLossCount">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Profit factor</span>
+                    <span class="stat-info" data-tooltip="Total profit divided by total losses. Above 1 means you make more than you lose.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="profitFactorDisplay">0.00</span>
+                    <div class="stat-gauge stat-gauge--donut" id="profitFactorGauge" aria-hidden="true"></div>
+                </div>
+                <span class="stat-sub" id="profitFactorSub">No Data</span>
+            </div>
+
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Avg win/loss trade</span>
+                    <span class="stat-info" data-tooltip="Your average winning trade size compared to your average losing trade size.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="avgWinLossRatioDisplay">0.00</span>
+                    <div class="stat-gauge-col">
+                        <div class="stat-avg-bar" id="avgWinLossBar" aria-hidden="true">
+                            <div class="stat-avg-bar-win" id="avgWinLossBarWin"></div>
+                            <div class="stat-avg-bar-loss" id="avgWinLossBarLoss"></div>
+                        </div>
+                        <div class="stat-avg-labels">
+                            <span class="legend-win" id="avgWinDisplay">$0</span>
+                            <span class="legend-loss" id="avgLossDisplay">-$0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Dashboard Widgets -->
+        <div class="dashboard-widgets">
+
+          <!-- Calendar (left) + performance charts (stacked, right) -->
+          <div class="calendar-and-charts">
+            <!-- Calendar -->
+            <section class="calendar-view" id="calendarCard" style="min-height: 500px;">
+                <div class="calendar-header calendar-header--rich" style="padding: 1rem;">
+                    <div class="cal-title-block">
+                        <div id="monthlyPnlDisplay" class="cal-monthly-pl">+$0</div>
+                        <div class="cal-title-sub">Monthly P/L &middot; <span id="monthlyTradesDisplay">0 trades</span></div>
+                    </div>
+                    <div class="cal-nav-group">
+                        <button class="cal-nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="m15 18-6-6 6-6" />
+                            </svg></button>
+                        <h3 id="currentMonthYear">April 2026</h3>
+                        <button class="cal-nav-btn"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="m9 18 6-6-6-6" />
+                            </svg></button>
+                    </div>
+                    <div class="cal-actions" data-html2canvas-ignore="true">
+                        <button class="cal-icon-btn" id="calScreenshotBtn" onclick="screenshotCalendar()" title="Screenshot calendar">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+                                <circle cx="12" cy="13" r="3" />
+                            </svg>
+                        </button>
+                        <span class="stat-info" data-tooltip="Your trading month at a glance: green days were profitable, red days were losses, and holidays are marked as closed. Use the arrows to change month or the camera to save a screenshot.">ⓘ</span>
+                    </div>
+                </div>
+                <div class="calendar-grid" style="grid-template-columns: repeat(5, 1fr) 120px;">
+                    <!-- Day Headers -->
+                    <div class="day-header">MON</div>
+                    <div class="day-header">TUE</div>
+                    <div class="day-header">WED</div>
+                    <div class="day-header">THU</div>
+                    <div class="day-header">FRI</div>
+                    <div class="day-header" style="color: var(--accent-primary);">WEEKLY</div>
+
+                    <!-- Days filled by JS -->
+                </div>
+            </section>
+
+            <!-- Performance Charts (stacked vertically to the right of the calendar) -->
+            <div class="dashboard-charts-row">
+                <section class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3>Trade time performance</h3>
+                        <span class="stat-info" data-tooltip="Each dot is a trade, plotted by the time of day you entered vs. its profit or loss.">ⓘ</span>
+                    </div>
+                    <div class="chart-content">
+                        <canvas id="timePerformanceChart"></canvas>
+                    </div>
+                </section>
+
+                <section class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                        <h3>Trade duration performance</h3>
+                        <span class="stat-info" data-tooltip="Each dot is a trade, plotted by how long you held it vs. its profit or loss.">ⓘ</span>
+                    </div>
+                    <div class="chart-content">
+                        <canvas id="durationPerformanceChart"></canvas>
+                    </div>
+                </section>
+            </div>
+          </div>
+
+            <!-- Score + Daily P/L Charts -->
+            <div class="dashboard-performance-row">
+                <section class="chart-container score-card">
+                    <div class="chart-header-row">
+                        <h3>Score</h3>
+                        <span class="stat-info" data-tooltip="An overall 0–100 rating averaging six areas of your trading. Hover each point on the chart for details.">ⓘ</span>
+                    </div>
+                    <div class="chart-content score-radar-wrap">
+                        <canvas id="scoreRadarChart"></canvas>
+                    </div>
+                    <div class="score-footer">
+                        <div class="score-footer-label">Your Score</div>
+                        <div class="score-footer-row">
+                            <span class="score-value" id="overallScoreDisplay">0.00</span>
+                            <div class="score-meter">
+                                <div class="score-meter-track">
+                                    <div class="score-meter-marker" id="scoreMeterMarker"></div>
+                                </div>
+                                <div class="score-meter-labels">
+                                    <span>0</span>
+                                    <span>50</span>
+                                    <span>100</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="chart-container">
+                    <div class="chart-header-row">
+                        <h3>Daily net cumulative P/L</h3>
+                        <span class="stat-info" data-tooltip="Your running total profit or loss built up day by day. Hover a point to see that day and the symbols traded.">ⓘ</span>
+                    </div>
+                    <div class="chart-content">
+                        <canvas id="cumulativePnlChart"></canvas>
+                    </div>
+                </section>
+
+                <section class="chart-container">
+                    <div class="chart-header-row">
+                        <h3>Net daily P/L</h3>
+                        <span class="stat-info" data-tooltip="Each bar is one trading day's profit (green) or loss (red). Hover to see the symbols traded that day.">ⓘ</span>
+                    </div>
+                    <div class="chart-content">
+                        <canvas id="dailyPnlChart"></canvas>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Drawdown + Progress Tracker -->
+            <div class="dashboard-bottom-row">
+                <section class="chart-container drawdown-card">
+                    <div class="chart-header-row">
+                        <h3>Drawdown</h3>
+                        <span class="stat-info" data-tooltip="How far your account dropped from its peak. The red area shows drawdown depth — closer to $0 means you're near your highs.">ⓘ</span>
+                    </div>
+                    <div class="chart-content">
+                        <canvas id="drawdownChart"></canvas>
+                    </div>
+                </section>
+
+                <section class="chart-container progress-tracker-card">
+                    <div class="chart-header-row">
+                        <h3>Progress tracker</h3>
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <a href="progress-tracker.html" class="view-more-link">View more</a>
+                            <span class="stat-info" data-tooltip="A heatmap of your trading activity. Darker blue means more trades that day. Weekends and market holidays are hidden.">ⓘ</span>
+                        </div>
+                    </div>
+                    <div class="progress-heatmap-wrap">
+                        <div id="progressHeatmapMonths" class="progress-heatmap-months"></div>
+                        <div class="progress-heatmap-body">
+                            <div class="progress-heatmap-days">
+                                <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                            </div>
+                            <div id="progressTrackerGrid" class="progress-heatmap"></div>
+                        </div>
+                        <div class="heatmap-legend">
+                            <span>Less</span>
+                            <div class="heatmap-legend-swatch" style="background:rgba(255,255,255,0.05)"></div>
+                            <div class="heatmap-legend-swatch" style="background:rgba(123,97,255,0.25)"></div>
+                            <div class="heatmap-legend-swatch" style="background:rgba(123,97,255,0.45)"></div>
+                            <div class="heatmap-legend-swatch" style="background:rgba(123,97,255,0.7)"></div>
+                            <div class="heatmap-legend-swatch" style="background:rgba(123,97,255,1)"></div>
+                            <span>More</span>
+                        </div>
+                    </div>
+                    <div class="progress-tracker-footer">
+                        <div class="today-score-block">
+                            <div class="today-score-label">Today's score <span class="stat-info" data-tooltip="How many daily checklist items you've completed today (out of 5).">ⓘ</span></div>
+                            <div class="today-score-row">
+                                <span id="todayScoreDisplay" class="today-score-value">0/5</span>
+                                <div class="today-score-bar">
+                                    <div id="todayScoreBarFill" class="today-score-bar-fill"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-checklist" id="dailyChecklistBtn" onclick="openDailyChecklist()">Daily checklist</button>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <!-- Daily Checklist Modal -->
+    <div id="checklistModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width:420px;">
+            <h2 style="margin-bottom:0.25rem;">Daily checklist</h2>
+            <p style="color:var(--text-muted); font-size:0.85rem; margin-bottom:1.25rem;">Check off what you did today. Your score updates automatically.</p>
+            <div id="checklistItems"></div>
+            <div style="display:flex; justify-content:flex-end; margin-top:1.5rem;">
+                <button type="button" class="btn-primary" onclick="closeDailyChecklist()">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Adding Trade -->
+    <div id="tradeModal" class="modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 1.5rem;">Log New Trade</h2>
+            <form id="tradeForm">
+                <div style="display: grid; grid-template-columns: 2fr 1fr 1.2fr; gap: 0.8rem; align-items: end; margin-bottom: 1rem;">
+                    <div class="form-group">
+                        <label>Symbol</label>
+                        <input type="text" id="symbolInput" list="stocklist" placeholder="Search (e.g. AMZN)" required>
+                        <datalist id="stocklist"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label>Action</label>
+                        <select id="actionSelect">
+                            <option value="Call">Call</option>
+                            <option value="Put">Put</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Contracts</label>
+                        <div class="stepper">
+                            <button type="button" onclick="decrement()" style="width: 30px; height: 35px;">-</button>
+                            <input type="number" id="contractsInput" value="1" min="1" readonly
+                                style="padding: 0.5rem; height: 35px;">
+                            <button type="button" onclick="increment()" style="width: 30px; height: 35px;">+</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                    <div class="form-group">
+                        <label>Entry Premium</label>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                            <input type="number" id="askInput" step="0.01" min="0" max="10" placeholder="1.54" required>
+                            <input type="range" id="askRange" min="0" max="10" step="0.01" value="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Close Premium</label>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                            <input type="number" id="closePremiumInput" step="0.01" min="0" max="10" placeholder="1.80">
+                            <input type="range" id="closePremiumRange" min="0" max="10" step="0.01" value="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Net P/L ($) <span style="color:var(--text-muted); font-weight:400; font-size:0.72rem;">— match TOS if different</span></label>
+                        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                            <input type="number" id="profitInput" step="0.01" placeholder="P/L" required
+                                style="padding: 0.5rem; height: 38px;">
+                            <input type="range" id="profitRange" min="-5000" max="5000" step="10" value="0">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                    <div class="form-group">
+                        <label>Trade Start</label>
+                        <div class="date-input-wrapper">
+                            <input type="datetime-local" id="startTimeInput" required
+                                style="padding: 0.6rem; font-size: 0.8rem;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                                <line x1="16" x2="16" y1="2" y2="6" />
+                                <line x1="8" x2="8" y1="2" y2="6" />
+                                <line x1="3" x2="21" y1="10" y2="10" />
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Trade End</label>
+                        <div class="date-input-wrapper">
+                            <input type="datetime-local" id="endTimeInput" style="padding: 0.6rem; font-size: 0.8rem;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <rect width="18" height="18" x="3" y="4" rx="2" ry="2" />
+                                <line x1="16" x2="16" y1="2" y2="6" />
+                                <line x1="8" x2="8" y1="2" y2="6" />
+                                <line x1="3" x2="21" y1="10" y2="10" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: stretch; margin-bottom: 0.8rem;">
+                    <div class="form-group">
+                        <label>Notes</label>
+                        <textarea id="notesInput" rows="4" placeholder="Entry reason..."
+                            style="padding: 0.6rem; font-size: 0.9rem; height: 100%; min-height: 120px;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Trade Screenshot / Chart</label>
+                        <div id="imageUploadArea" onclick="document.getElementById('tradeImageInput').click()"
+                            style="border: 2px dashed rgba(0,242,254,0.3); border-radius: 12px; padding: 1rem; cursor: pointer; transition: border-color 0.2s; text-align: center; background: rgba(0,242,254,0.03); position: relative; height: calc(100% - 25px); display: flex; flex-direction: column; justify-content: center;">
+                            <input type="file" id="tradeImageInput" accept="image/*" style="display:none;"
+                                onchange="handleTradeImageUpload(event, 'imageUploadArea', 'imagePreview')">
+                            <div id="imagePreview" style="display:none; position:relative;">
+                                <img id="imagePreviewImg" src="" alt="Trade chart"
+                                    style="max-width:100%; max-height:100px; border-radius:8px; object-fit:contain;">
+                                <button type="button"
+                                    onclick="event.stopPropagation(); clearTradeImage('imagePreview','tradeImageInput','imageUploadArea')"
+                                    style="position:absolute; top:4px; right:4px; background:rgba(255,77,109,0.9); border:none; color:white; border-radius:50%; width:22px; height:22px; cursor:pointer; font-size:14px; line-height:22px; padding:0;">×</button>
+                            </div>
+                            <div id="imageUploadPlaceholder" style="color:var(--text-muted); font-size:0.8rem;">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5" style="display:block; margin:0 auto 4px;">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                                    <circle cx="8.5" cy="8.5" r="1.5" />
+                                    <polyline points="21 15 16 10 5 21" />
+                                </svg>
+                                Click to upload image
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1rem;">
+                    <button type="button" class="btn-primary" style="background: var(--glass); color: white; border: 1px solid var(--border);" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Log Option Trade</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="../JS/trade_logic.js"></script>
+    <!-- Day Detail Modal -->
+    <div id="dayInfoModal" class="modal" style="display: none; z-index: 2000;">
+        <div class="modal-content" style="max-width: 850px; padding: 3rem; background: #121212;">
+            <div class="day-modal-header"
+                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <h2 id="modalDayDate" style="font-size: 1.4rem;">Fri, Mar 27, 2026</h2>
+                    <span style="color: var(--text-muted);">•</span>
+                    <span id="modalDayNetPL"
+                        style="color: var(--profit-green); font-weight: 700; font-size: 1.2rem;">Net P/L $2,099</span>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="btn-secondary" style="font-size: 0.8rem; height: 32px;"><svg width="14" height="14"
+                            viewBox="0 0 24 24" fill="currentColor" style="margin-right: 4px; vertical-align: middle;">
+                            <path d="M8 5v14l11-7z" />
+                        </svg> Replay</button>
+                    <button class="btn-secondary" style="font-size: 0.8rem; height: 32px;">+ Add note</button>
+                    <img src="https://ui-avatars.com/api/?name=User&background=7b61ff&color=fff"
+                        style="width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--border);">
+                </div>
+            </div>
+
+            <!-- Metrics & Mini Chart Grid -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2rem;">
+                <div style="height: 180px;">
+                    <canvas id="modalDayChart"></canvas>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem;">
+                    <div>
+                        <div id="modalTradeCategory"
+                            style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Ticker</div>
+                        <div id="modalTotalTrades" style="font-weight: 700; font-size: 1.1rem;">-</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Gross P/L</div>
+                        <div id="modalGrossPL" style="font-weight: 700; font-size: 1.1rem;">$0</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Winners / Losers
+                        </div>
+                        <div id="modalWinLoss" style="font-weight: 700; font-size: 1.1rem;">0 / 0</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Win Rate</div>
+                        <div id="modalWinRate" style="font-weight: 700; font-size: 1.1rem;">0%</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Volume</div>
+                        <div id="modalVolume" style="font-weight: 700; font-size: 1.1rem;">0</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Trade Cost</div>
+                        <div id="modalTradeCost" style="font-weight: 700; font-size: 1.1rem;">$0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trade Table in Modal -->
+            <div
+                style="background: rgba(255,255,255,0.02); border-radius: 12px; padding: 0.5rem; overflow: hidden; border: 1px solid var(--border);">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                    <thead style="border-bottom: 1px solid var(--border); color: var(--text-muted);">
+                        <tr>
+                            <th style="padding: 1rem; text-align: left;">Time Frame</th>
+                            <th style="text-align: left;">Ticker</th>
+                            <th style="text-align: left;">Side</th>
+                            <th style="text-align: left;">Instrument</th>
+                            <th style="text-align: left;">Net P/L</th>
+                            <th style="text-align: left;">Net ROI</th>
+                            <th style="text-align: left;">Strategy</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalTradeTableBody">
+                    </tbody>
+                </table>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 2rem;">
+                <button class="btn-secondary" style="height: 40px; padding: 0 1.5rem;"
+                    onclick="closeDayModal()">Cancel</button>
+                <button class="btn-primary" style="height: 40px; padding: 0 1.5rem; width: auto;">View Details</button>
+            </div>
+        </div>
+    </div>
+    <!-- Custom Notification/Prompt Modal -->
+    <div id="notificationModal" class="notification-modal">
+        <div class="notification-content">
+            <div id="notificationIcon" class="notification-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="8" x2="12" y2="12"></line>
+                    <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+            </div>
+            <h3 id="notificationTitle" class="notification-title">Notification</h3>
+            <p id="notificationMessage" class="notification-message">This is a message.</p>
+            <input type="text" id="notificationInput" class="notification-input" style="display: none;">
+            <div id="notificationButtons" class="notification-buttons">
+                <button id="notificationCancel" class="notification-btn secondary"
+                    style="display: none;">Cancel</button>
+                <button id="notificationConfirm" class="notification-btn primary">OK</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
