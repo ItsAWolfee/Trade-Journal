@@ -8,6 +8,20 @@ activity heatmap. It runs two ways from the same code:
 
 All data is stored locally in the browser via `localStorage`, so it stays on your device.
 
+## 🚀 Live Demo
+
+**[Try it now: https://itsawolfee.github.io/Trade-Journal/](https://itsawolfee.github.io/Trade-Journal/)**
+
+## ✨ Features
+
+- 📅 **Calendar View** - Track trades by date
+- 📊 **Performance Charts** - Visualize your trading performance
+- 🎯 **Score Radar** - Multi-dimensional performance analysis
+- 📉 **Drawdown Tracking** - Monitor risk and drawdowns
+- 🔥 **Activity Heatmap** - See your trading patterns at a glance
+- 💾 **Local Storage** - All data stays private on your device
+- 📱 **Mobile Friendly** - Works on desktop, tablet, and phone
+
 ## Run the desktop app
 
 ```bash
