@@ -98,6 +98,9 @@
             <button type="button" class="data-backup-btn" onclick="importJournalData()">Import Data</button>
             <input type="file" id="journalImportInput" accept=".json,application/json" style="display:none;" onchange="handleJournalImport(event)">
             <p class="data-backup-hint">Export before switching laptops, then import on the new one.</p>
+            <div class="data-backup-header" style="margin-top: 0.75rem;">Show data on phone</div>
+            <button type="button" class="data-backup-btn" onclick="exportSyncFile()">Update Phone Data</button>
+            <p class="data-backup-hint">Saves journal-data.json. Put it in the project's data folder, then commit &amp; push.</p>
         </div>
         <div style="margin-top: auto;">
             <a href="#" class="nav-item">

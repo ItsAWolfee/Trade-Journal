@@ -1,3 +1,26 @@
+// On touch phones in landscape, render the full desktop layout scaled to fit the
+// screen (so it looks the same as desktop). Portrait stays responsive.
+(function setupResponsiveViewport() {
+    function applyViewport() {
+        let meta = document.querySelector('meta[name="viewport"]');
+        if (!meta) {
+            meta = document.createElement('meta');
+            meta.setAttribute('name', 'viewport');
+            (document.head || document.documentElement).appendChild(meta);
+        }
+        const isTouch = window.matchMedia('(pointer: coarse)').matches;
+        const isLandscape = window.matchMedia('(orientation: landscape)').matches;
+        if (isTouch && isLandscape) {
+            meta.setAttribute('content', 'width=1400');
+        } else {
+            meta.setAttribute('content', 'width=device-width, initial-scale=1.0');
+        }
+    }
+    applyViewport();
+    window.addEventListener('orientationchange', applyViewport);
+    window.addEventListener('resize', applyViewport);
+})();
+
 // Persistence Logic: Load trades from localStorage
 let trades = JSON.parse(localStorage.getItem('tradeJournalData')) || [];
 
@@ -63,6 +86,74 @@ window.exportJournalData = function exportJournalData() {
     URL.revokeObjectURL(url);
     showAlert('Your trades, watchlist, and notes were saved to a backup file.', 'Export Complete');
 };
+
+// --- Git-based data sync (so your phone shows the data you push from your PC) ---
+// Location of the committed data file, relative to the HTML pages in /HTML/.
+const REMOTE_DATA_URL = '../data/journal-data.json';
+const SYNC_MARKER_KEY = 'tradeJournalSyncedAt';
+
+// Downloads a file named exactly `journal-data.json`. Drop it into the repo's
+// `data/` folder (replacing the old one), then commit & push. On the next load,
+// your phone (and any device) will pick up the new data automatically.
+window.exportSyncFile = function exportSyncFile() {
+    const payload = getJournalBackupPayload();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'journal-data.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showAlert(
+        'Saved "journal-data.json". Put this file in your project\'s data folder (replace the old one), then commit & push. Your phone will update on next open.',
+        'Ready to Push'
+    );
+};
+
+// Loads the committed data file and, when appropriate, applies it to this device.
+// Updates localStorage + the in-memory `trades` array WITHOUT rendering, because
+// the normal startup render runs right after this resolves.
+async function syncJournalFromRepo() {
+    try {
+        const res = await fetch(REMOTE_DATA_URL, { cache: 'no-store' });
+        if (!res.ok) return;
+
+        const payload = await res.json();
+        if (!payload || !Array.isArray(payload.trades)) return;
+
+        const remoteStamp = payload.exportedAt || '';
+        if (!remoteStamp) return;
+
+        const hasLocalTrades = (JSON.parse(localStorage.getItem('tradeJournalData') || '[]')).length > 0;
+        const appliedStamp = localStorage.getItem(SYNC_MARKER_KEY) || '';
+
+        // Seed a fresh device (e.g. your phone) from the repo, and pull newer
+        // pushes on devices that have already synced. Never clobber unsynced
+        // local edits (e.g. your PC's working data).
+        const shouldApply = !hasLocalTrades || (appliedStamp && remoteStamp > appliedStamp);
+        if (!shouldApply) return;
+
+        trades = payload.trades.map(t => {
+            if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
+            return t;
+        });
+        localStorage.setItem('tradeJournalData', JSON.stringify(trades));
+
+        if (payload.watchlist) {
+            localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
+        }
+        if (typeof payload.tradingNotes === 'string') {
+            localStorage.setItem('tradingNotes', payload.tradingNotes);
+        }
+
+        localStorage.setItem(SYNC_MARKER_KEY, remoteStamp);
+    } catch (err) {
+        // Offline, running from file://, or no data file yet — just use local data.
+        console.debug('Journal sync skipped:', err);
+    }
+}
 
 window.importJournalData = function importJournalData() {
     const input = document.getElementById('journalImportInput');
@@ -2357,7 +2448,9 @@ function initInfoTooltips() {
     document.addEventListener('scroll', hide, true);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await syncJournalFromRepo();
+
     initInfoTooltips();
     syncStocklistDatalists();
     renderWatchlistPanel();
