@@ -119,9 +119,6 @@
                 <h1>Trading Dashboard</h1>
                 <p>Track, analyze, and optimize your trading performance.</p>
             </div>
-            <div style="display: flex; gap: 1rem; align-items: center;">
-                <button class="btn-primary" onclick="openModal()">+ Add Trade</button>
-            </div>
         </header>
 
         <!-- Top Stats Row -->
@@ -251,6 +248,31 @@
                 </section>
             </div>
           </div>
+
+            <!-- Recent trades -->
+            <section class="chart-container dashboard-recent-trades">
+                <div class="chart-header-row">
+                    <h3>Recent trades</h3>
+                    <a href="trade-view.html" class="view-more-link">Open trade view →</a>
+                </div>
+                <div class="dashboard-trade-table-wrap">
+                    <table class="trade-log-table dashboard-trade-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Gross P/L</th>
+                                <th>Net P/L</th>
+                                <th>ROI</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dashboardRecentTradesBody">
+                            <tr><td colspan="6" style="padding:1.5rem;text-align:center;color:var(--text-muted);">No trades yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
 
             <!-- Score + Daily P/L Charts -->
             <div class="dashboard-performance-row">
@@ -494,7 +516,7 @@
         </div>
     </div>
 
-    <script src="../JS/trade_logic.js?v=sync2"></script>
+    <script src="../JS/trade_logic.js?v=sync19"></script>
     <!-- Day Detail Modal -->
     <div id="dayInfoModal" class="modal" style="display: none; z-index: 2000;">
         <div class="modal-content" style="max-width: 850px; padding: 3rem; background: #121212;">

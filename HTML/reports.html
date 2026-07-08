@@ -161,7 +161,28 @@
             </section>
         </div>
 
-        <!-- Drawdown -->
+            <!-- Drawdown -->
+        <div class="reports-scatter-row" style="margin-top: 1.5rem;">
+            <section class="chart-container">
+                <div class="chart-header-row">
+                    <h3>Trade time performance</h3>
+                    <span class="stat-info" data-tooltip="Each dot is a trade, plotted by the time of day you entered vs. its profit or loss.">ⓘ</span>
+                </div>
+                <div class="chart-content">
+                    <canvas id="timePerformanceChart"></canvas>
+                </div>
+            </section>
+            <section class="chart-container">
+                <div class="chart-header-row">
+                    <h3>Trade duration performance</h3>
+                    <span class="stat-info" data-tooltip="Each dot is a trade, plotted by how long you held it vs. its profit or loss.">ⓘ</span>
+                </div>
+                <div class="chart-content">
+                    <canvas id="durationPerformanceChart"></canvas>
+                </div>
+            </section>
+        </div>
+
         <div class="dashboard-bottom-row" style="grid-template-columns: 1fr; margin-top: 1.5rem;">
             <section class="chart-container drawdown-card">
                 <div class="chart-header-row">
@@ -175,7 +196,7 @@
         </div>
     </main>
 
-    <script src="../JS/trade_logic.js?v=sync2"></script>
+    <script src="../JS/trade_logic.js?v=sync17"></script>
     <!-- Custom Notification/Prompt Modal -->
     <div id="notificationModal" class="notification-modal">
         <div class="notification-content">

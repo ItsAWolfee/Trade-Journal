@@ -384,6 +384,23 @@ let currentMonth = new Date().getMonth();
 
 // Thinkorswim options commission: $0.65 per contract per side (open + close)
 const TOS_FEE_PER_CONTRACT = 0.65;
+const FEE_SETTING_KEY = 'tradeJournalTosFee';
+const DEFAULT_CONTRACTS_KEY = 'tradeJournalDefaultContracts';
+const COMPACT_TABLE_KEY = 'tradeJournalCompactTable';
+
+function getTosFeeRate() {
+    const v = parseFloat(localStorage.getItem(FEE_SETTING_KEY));
+    return Number.isFinite(v) && v >= 0 ? v : TOS_FEE_PER_CONTRACT;
+}
+
+function getDefaultContracts() {
+    const v = parseInt(localStorage.getItem(DEFAULT_CONTRACTS_KEY), 10);
+    return Number.isFinite(v) && v >= 1 ? v : 1;
+}
+
+function isCompactTable() {
+    return localStorage.getItem(COMPACT_TABLE_KEY) === '1';
+}
 
 function getTradeContractCount(trade) {
     return Math.max(1, parseInt(trade.contracts, 10) || 1);
@@ -395,13 +412,21 @@ function getTradeFeeSides(trade) {
 }
 
 function getTradeFees(trade) {
-    return getTradeContractCount(trade) * getTradeFeeSides(trade) * TOS_FEE_PER_CONTRACT;
+    return getTradeContractCount(trade) * getTradeFeeSides(trade) * getTosFeeRate();
 }
 
 function getNetProfit(trade) {
     const profit = parseFloat(trade.profit) || 0;
     // Always subtract TOS fees so every trade's P/L is net and consistent.
     return profit - getTradeFees(trade);
+}
+
+function getGrossProfit(trade) {
+    return parseFloat(trade.profit) || 0;
+}
+
+function sumGrossProfit(tradeList) {
+    return tradeList.reduce((sum, t) => sum + getGrossProfit(t), 0);
 }
 
 function getProfitFeeNote(trade) {
@@ -424,7 +449,7 @@ function formatMoney(val) {
 function formatFeesLabel(tradeList) {
     const total = sumFees(tradeList);
     if (!tradeList.length || total <= 0) return 'TOS fees: $0.00';
-    return `${formatMoney(total)} TOS fees (@ $0.65/contract)`;
+    return `${formatMoney(total)} TOS fees`;
 }
 
 // Helper to format currency elegantly ($210 vs +2.64K)
@@ -459,7 +484,6 @@ function getDailyProfitExtremes() {
     return { maxGain, maxLoss };
 }
 
-// Biggest single-trade gain / loss across all history (used for scatter charts).
 function getTradeProfitExtremes() {
     let maxGain = 0, maxLoss = 0;
     (trades || []).forEach(t => {
@@ -468,6 +492,62 @@ function getTradeProfitExtremes() {
         if (v < 0 && Math.abs(v) > maxLoss) maxLoss = Math.abs(v);
     });
     return { maxGain, maxLoss };
+}
+
+function getTradeProfitExtremesForList(list) {
+    let maxGain = 0, maxLoss = 0;
+    (list || []).forEach(t => {
+        const v = getNetProfit(t);
+        if (v > maxGain) maxGain = v;
+        if (v < 0 && Math.abs(v) > maxLoss) maxLoss = Math.abs(v);
+    });
+    return { maxGain, maxLoss };
+}
+
+function getTradeCostBasis(trade) {
+    const entry = parseFloat(trade.ask) || parseFloat(trade.entryPrice) || 0;
+    return entry * getTradeContractCount(trade) * 100;
+}
+
+function getNetROI(trade) {
+    const basis = getTradeCostBasis(trade);
+    if (basis <= 0) return null;
+    return (getNetProfit(trade) / basis) * 100;
+}
+
+function formatROI(val) {
+    if (val === null || val === undefined || Number.isNaN(val)) return '--';
+    const sign = val >= 0 ? '+' : '';
+    return `${sign}${val.toFixed(1)}%`;
+}
+
+function formatTradeDate(dateStr) {
+    if (!dateStr) return '--';
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatTradeTimeFrame(trade) {
+    const start = trade.time ? trade.time.slice(0, 5) : '--';
+    let end = '';
+    if (trade.endTime) {
+        end = trade.endTime.includes('T') ? trade.endTime.split('T')[1].slice(0, 5) : trade.endTime.slice(0, 5);
+    }
+    return end ? `${start} – ${end}` : start;
+}
+
+function renderTradeScaleHtml(netProfit, extremes) {
+    const intensity = profitIntensity(netProfit, extremes);
+    const minWidth = netProfit === 0 ? 0 : 8;
+    const width = Math.max(minWidth, Math.round(intensity * 50));
+    if (netProfit > 0) {
+        return `<div class="trade-scale"><div class="trade-scale-track"><div class="trade-scale-line"></div><div class="trade-scale-center"></div><div class="trade-scale-bar trade-scale-bar--win" style="width:${width}%"></div></div></div>`;
+    }
+    if (netProfit < 0) {
+        return `<div class="trade-scale"><div class="trade-scale-track"><div class="trade-scale-line"></div><div class="trade-scale-center"></div><div class="trade-scale-bar trade-scale-bar--loss" style="width:${width}%"></div></div></div>`;
+    }
+    return `<div class="trade-scale"><div class="trade-scale-track"><div class="trade-scale-line"></div><div class="trade-scale-center"></div></div></div>`;
 }
 
 // 0..1 intensity for a value relative to the best gain / worst loss.
@@ -507,6 +587,9 @@ function openModal() {
         const tradeForm = document.getElementById('tradeForm');
         if (tradeForm) tradeForm.reset();
 
+        const contractsInput = document.getElementById('contractsInput');
+        if (contractsInput) contractsInput.value = getDefaultContracts();
+
         // Reset cost display
         const costDisplay = document.getElementById('costDisplay');
         if (costDisplay) costDisplay.textContent = '$0.00';
@@ -523,6 +606,15 @@ function closeModal() {
     formLoadingTrade = false;
     const tradeModal = document.getElementById('tradeModal');
     if (tradeModal) tradeModal.style.display = 'none';
+}
+
+function initTradeModalBackdropClose() {
+    const tradeModal = document.getElementById('tradeModal');
+    if (!tradeModal || tradeModal.dataset.backdropBound) return;
+    tradeModal.dataset.backdropBound = '1';
+    tradeModal.addEventListener('click', (e) => {
+        if (e.target === tradeModal) closeModal();
+    });
 }
 
 // Dashboard Stats Calculation
@@ -633,7 +725,6 @@ function updateDashboardStats() {
     const netPlCount = document.getElementById('netPlTradeCount');
     const winRateElem = document.getElementById('winRateDisplay');
     const pfElem = document.getElementById('profitFactorDisplay');
-    const pfSub = document.getElementById('profitFactorSub');
     const feesSub = document.getElementById('totalFeesSub');
 
     if (netPLElem) {
@@ -656,13 +747,10 @@ function updateDashboardStats() {
         pfElem.textContent = profitFactor;
         if (profitFactor === 'MAX' || profitFactorNum > 2) {
             pfElem.style.color = 'var(--profit-green)';
-            if (pfSub) pfSub.textContent = 'Excellent Efficiency';
         } else if (profitFactorNum >= 1) {
             pfElem.style.color = '#ffcc00';
-            if (pfSub) pfSub.textContent = 'Decent Efficiency';
         } else {
             pfElem.style.color = 'var(--loss-red)';
-            if (pfSub) pfSub.textContent = 'Needs Improvement';
         }
     }
     renderDonutGauge(document.getElementById('profitFactorGauge'), grossProfit, grossLoss);
@@ -780,6 +868,9 @@ function buildScatterPlugins(kind) {
 }
 
 // Chart Initializations
+let timePerformanceChart = null;
+let durationPerformanceChart = null;
+
 function initCharts() {
     const tradeExtremes = getTradeProfitExtremes();
     const list = trades || [];
@@ -790,7 +881,8 @@ function initCharts() {
 
     const timeCtx = document.getElementById('timePerformanceChart');
     if (timeCtx) {
-        new Chart(timeCtx.getContext('2d'), {
+        destroyChartInstance(timePerformanceChart);
+        timePerformanceChart = new Chart(timeCtx.getContext('2d'), {
             type: 'scatter',
             data: {
                 datasets: [{
@@ -834,11 +926,12 @@ function initCharts() {
 
     const durationCtx = document.getElementById('durationPerformanceChart');
     if (durationCtx) {
+        destroyChartInstance(durationPerformanceChart);
         // Auto-scale the duration (x) axis to your longest trade
         const maxDur = list.reduce((m, t) => Math.max(m, parseDurationMins(t)), 0);
         const xBound = niceAxisBound(Math.max(maxDur, 5) * 1.1);
 
-        new Chart(durationCtx.getContext('2d'), {
+        durationPerformanceChart = new Chart(durationCtx.getContext('2d'), {
             type: 'scatter',
             data: {
                 datasets: [{
@@ -1409,7 +1502,11 @@ function populateCalendar() {
     calendarGrid.innerHTML = '';
 
     // Enforce a 5 weekday columns + weekly summary layout (overrides any stale CSS cache)
-    calendarGrid.style.gridTemplateColumns = 'repeat(5, 1fr) 120px';
+    const weeklyCol = document.body.classList.contains('calendar-page') ? '190px' : '120px';
+    calendarGrid.style.gridTemplateColumns = `repeat(5, 1fr) ${weeklyCol}`;
+    if (document.body.classList.contains('calendar-page')) {
+        calendarGrid.classList.add('calendar-grid--wide-weekly');
+    }
 
     // Day Headers (Mon-Fri trading days only + weekly summary)
     const headers = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'WEEKLY'];
@@ -1599,10 +1696,109 @@ const SIDEBAR_NAV_ITEMS = [
     { href: 'day-view.html', label: 'Day View', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' },
     { href: 'trade-view.html', label: 'Trade View', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path>' },
     { href: 'reports.html', label: 'Reports', icon: '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path>' },
+    { href: 'ai-chat.html', label: 'AI Chat', icon: '<path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M5 19l1 3 1-3 3-1-3-1-1-3-1 3-3 1z"/><path d="M19 13l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5L17 15z"/>' },
     { href: 'trade-replay.html', label: 'Trade Replay', icon: '<circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/>' },
     { href: 'progress-tracker.html', label: 'Progress Tracker', icon: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>' },
     { href: 'resources.html', label: 'Resources', icon: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>' }
 ];
+
+const PAGE_HEADERS = {
+    'dashboard.html': { title: 'Trading Dashboard', desc: 'Track, analyze, and optimize your trading performance.' },
+    'calendar.html': { title: 'Calendar', desc: 'Your trading month at a glance — click any day to open it.' },
+    'day-view.html': { title: 'Day View', desc: 'Deep-dive into a single session — trades, charts, and notes.' },
+    'trade-view.html': { title: 'Trade View', desc: 'Search, filter, and manage your complete trade history.' },
+    'reports.html': { title: 'Reports', desc: 'Performance breakdowns, drawdowns, and cumulative P/L trends.' },
+    'ai-chat.html': { title: 'AI Chat', desc: 'Ask questions about your journal — powered by your trade data.' },
+    'trade-replay.html': { title: 'Trade Replay', desc: 'Step through sessions with charts, levels, and playback.' },
+    'progress-tracker.html': { title: 'Progress Tracker', desc: 'Visualize your consistency and activity over time.' },
+    'resources.html': { title: 'Resources', desc: 'Notebook, links, and reference material for your edge.' },
+    'strategies.html': { title: 'Strategies', desc: 'Document and track the setups you trade.' }
+};
+
+function applyPageHeader() {
+    const page = (window.location.pathname.split('/').pop() || 'dashboard.html').toLowerCase();
+    const meta = PAGE_HEADERS[page];
+    if (!meta) return;
+
+    if (page === 'ai-chat.html') {
+        const hero = document.getElementById('aiChatHero');
+        if (hero && !hero.querySelector('.page-header-eyebrow')) {
+            const eyebrow = document.createElement('p');
+            eyebrow.className = 'page-header-eyebrow';
+            eyebrow.textContent = meta.title;
+            const desc = document.createElement('p');
+            desc.className = 'page-header-desc';
+            desc.textContent = meta.desc;
+            const greeting = hero.querySelector('.ai-chat-greeting');
+            if (greeting) {
+                greeting.before(eyebrow);
+                greeting.after(desc);
+            }
+        }
+        return;
+    }
+
+    if (page === 'trade-replay.html') {
+        const main = document.querySelector('main.replay-page');
+        if (main && !main.querySelector('.page-header-block')) {
+            const block = document.createElement('header');
+            block.className = 'top-header page-header-block';
+            block.innerHTML = `<div class="welcome-text"><h1>${meta.title}</h1><p>${meta.desc}</p></div>`;
+            main.insertBefore(block, main.firstChild);
+        }
+        return;
+    }
+
+    if (page === 'day-view.html') {
+        const header = document.querySelector('.day-view-header');
+        if (header && !header.querySelector('.page-intro')) {
+            const intro = document.createElement('div');
+            intro.className = 'welcome-text page-intro';
+            intro.innerHTML = `<h1>${meta.title}</h1><p>${meta.desc}</p>`;
+            header.insertBefore(intro, header.firstChild);
+        }
+        return;
+    }
+
+    if (page === 'trade-view.html') {
+        const header = document.querySelector('.trade-view-main .top-header');
+        if (header && !header.querySelector('.trade-view-title-block')) {
+            header.querySelector('h1')?.remove();
+            document.getElementById('totalTradesLabel')?.remove();
+            const block = document.createElement('div');
+            block.className = 'welcome-text trade-view-title-block';
+            block.innerHTML = `<h1>${meta.title}</h1><p>${meta.desc}</p>`;
+            header.insertBefore(block, header.firstChild);
+            header.classList.add('trade-view-header');
+        }
+        return;
+    }
+
+    const header = document.querySelector('main .top-header, main .header');
+    if (!header) return;
+
+    let welcome = header.querySelector('.welcome-text');
+    if (!welcome) {
+        const h1 = header.querySelector('h1');
+        const looseP = header.querySelector(':scope > p');
+        welcome = document.createElement('div');
+        welcome.className = 'welcome-text';
+        welcome.innerHTML = `<h1>${meta.title}</h1><p>${meta.desc}</p>`;
+        header.insertBefore(welcome, header.firstChild);
+        h1?.remove();
+        looseP?.remove();
+    } else {
+        const h1 = welcome.querySelector('h1');
+        const p = welcome.querySelector('p');
+        if (h1) h1.textContent = meta.title;
+        if (p) p.textContent = meta.desc;
+        else if (meta.desc) {
+            const np = document.createElement('p');
+            np.textContent = meta.desc;
+            welcome.appendChild(np);
+        }
+    }
+}
 
 function renderSidebar() {
     const sidebar = document.querySelector('.sidebar');
@@ -1631,7 +1827,6 @@ function renderSidebar() {
             <button type="button" class="data-backup-btn data-backup-btn--primary" onclick="pushJournalToGithub()">Sync to Phone</button>
             <button type="button" class="data-backup-btn" onclick="pullJournalFromGithub()">Pull Latest</button>
             <input type="file" id="journalImportInput" accept=".json,application/json" style="display:none;" onchange="handleJournalImport(event)">
-            <p class="data-backup-hint">PC: tap Sync to Phone after adding trades. Phone: tap Pull Latest (or refresh).</p>
         </div>
         <div style="margin-top: auto;">
             <a href="#" class="nav-item" onclick="openSettings(); return false;">
@@ -1671,38 +1866,97 @@ function openSettings() {
         modal.id = 'settingsModal';
         modal.className = 'modal';
         modal.innerHTML = `
-            <div class="modal-content" style="max-width: 460px;">
+            <div class="modal-content settings-modal-content">
                 <h2 style="margin-bottom: 0.25rem;">Settings</h2>
-                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">Personalize your journal.</p>
-                <div class="settings-row settings-row--stack">
-                    <div>
-                        <div class="settings-row-title">GitHub sync token</div>
-                        <div class="settings-row-sub">One-time setup on your PC. Create a token at github.com/settings/tokens with <strong>repo</strong> access.</div>
+                <p class="settings-modal-sub">Personalize your journal, fees, and display.</p>
+
+                <div class="settings-section">
+                    <div class="settings-section-label">Profile &amp; AI</div>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">Your name</div>
+                            <div class="settings-row-sub">Used in the AI chat greeting.</div>
+                        </div>
+                        <input type="text" id="settingsUserName" class="settings-token-input" placeholder="Trader" autocomplete="off">
+                        <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveUserNameFromSettings()">Save name</button>
                     </div>
-                    <input type="password" id="settingsGithubToken" class="settings-token-input" placeholder="ghp_..." autocomplete="off">
-                    <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveGithubTokenFromSettings()">Save token</button>
-                </div>
-                <div class="settings-row">
-                    <div>
-                        <div class="settings-row-title">Light mode</div>
-                        <div class="settings-row-sub">Switch between the dark and light theme.</div>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="settingsThemeToggle" onchange="setTheme(this.checked ? 'light' : 'dark')">
-                        <span class="switch-slider"></span>
-                    </label>
-                </div>
-                <div class="settings-row">
-                    <div>
-                        <div class="settings-row-title">Backup your data</div>
-                        <div class="settings-row-sub">Save or restore all trades, watchlist and notes.</div>
-                    </div>
-                    <div style="display:flex; gap:0.5rem;">
-                        <button type="button" class="data-backup-btn" style="width:auto;" onclick="exportJournalData()">Export</button>
-                        <button type="button" class="data-backup-btn" style="width:auto;" onclick="importJournalData()">Import</button>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">OpenAI API key (optional)</div>
+                            <div class="settings-row-sub">Powers open-ended AI chat. Stored only on this device.</div>
+                        </div>
+                        <input type="password" id="settingsOpenAIKey" class="settings-token-input" placeholder="sk-..." autocomplete="off">
+                        <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveOpenAIKeyFromSettings()">Save API key</button>
                     </div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; margin-top:1.5rem;">
+
+                <div class="settings-section">
+                    <div class="settings-section-label">Trading defaults</div>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">TOS fee per contract</div>
+                            <div class="settings-row-sub">Used for net P/L and fee labels across the journal.</div>
+                        </div>
+                        <input type="number" id="settingsTosFee" class="settings-token-input" min="0" step="0.01" placeholder="0.65">
+                        <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveTosFeeFromSettings()">Save fee rate</button>
+                    </div>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">Default contracts</div>
+                            <div class="settings-row-sub">Pre-filled when you open the add-trade form.</div>
+                        </div>
+                        <input type="number" id="settingsDefaultContracts" class="settings-token-input" min="1" max="999" step="1" placeholder="1">
+                        <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveDefaultContractsFromSettings()">Save default</button>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-label">Appearance</div>
+                    <div class="settings-row">
+                        <div>
+                            <div class="settings-row-title">Light mode</div>
+                            <div class="settings-row-sub">Switch between dark and light theme.</div>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="settingsThemeToggle" onchange="setTheme(this.checked ? 'light' : 'dark')">
+                            <span class="switch-slider"></span>
+                        </label>
+                    </div>
+                    <div class="settings-row">
+                        <div>
+                            <div class="settings-row-title">Compact trade table</div>
+                            <div class="settings-row-sub">Tighter rows on Trade View for more rows on screen.</div>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="settingsCompactTable" onchange="saveCompactTableFromSettings(this.checked)">
+                            <span class="switch-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-label">Sync &amp; backup</div>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">GitHub sync token</div>
+                            <div class="settings-row-sub">One-time setup. Token needs <strong>repo</strong> access at github.com/settings/tokens</div>
+                        </div>
+                        <input type="password" id="settingsGithubToken" class="settings-token-input" placeholder="ghp_..." autocomplete="off">
+                        <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveGithubTokenFromSettings()">Save token</button>
+                    </div>
+                    <div class="settings-row">
+                        <div>
+                            <div class="settings-row-title">Backup your data</div>
+                            <div class="settings-row-sub">Export or import trades, watchlist, and notes.</div>
+                        </div>
+                        <div style="display:flex; gap:0.5rem;">
+                            <button type="button" class="data-backup-btn" style="width:auto;" onclick="exportJournalData()">Export</button>
+                            <button type="button" class="data-backup-btn" style="width:auto;" onclick="importJournalData()">Import</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; margin-top:1.25rem;">
                     <button type="button" class="btn-primary" onclick="closeSettings()">Done</button>
                 </div>
             </div>
@@ -1717,12 +1971,529 @@ function openSettings() {
         tokenInput.value = '';
         tokenInput.placeholder = getGithubToken() ? 'Token saved — paste new one to replace' : 'ghp_...';
     }
+    const openaiInput = modal.querySelector('#settingsOpenAIKey');
+    if (openaiInput) {
+        openaiInput.value = '';
+        openaiInput.placeholder = getOpenAIKey() ? 'API key saved — paste new one to replace' : 'sk-...';
+    }
+    const nameInput = modal.querySelector('#settingsUserName');
+    if (nameInput) nameInput.value = getUserName();
+    const feeInput = modal.querySelector('#settingsTosFee');
+    if (feeInput) feeInput.value = getTosFeeRate();
+    const contractsInput = modal.querySelector('#settingsDefaultContracts');
+    if (contractsInput) contractsInput.value = getDefaultContracts();
+    const compactToggle = modal.querySelector('#settingsCompactTable');
+    if (compactToggle) compactToggle.checked = isCompactTable();
     modal.style.display = 'flex';
+}
+
+function saveTosFeeFromSettings() {
+    const input = document.getElementById('settingsTosFee');
+    const v = parseFloat(input?.value);
+    if (!Number.isFinite(v) || v < 0) {
+        showAlert('Enter a valid fee amount (e.g. 0.65).', 'Invalid fee');
+        return;
+    }
+    localStorage.setItem(FEE_SETTING_KEY, String(v));
+    updateDashboardStats();
+    refreshAllViews();
+    showAlert(`Fee rate saved: $${v.toFixed(2)} per contract.`, 'Saved');
+}
+
+function saveDefaultContractsFromSettings() {
+    const input = document.getElementById('settingsDefaultContracts');
+    const v = parseInt(input?.value, 10);
+    if (!Number.isFinite(v) || v < 1) {
+        showAlert('Enter at least 1 contract.', 'Invalid value');
+        return;
+    }
+    localStorage.setItem(DEFAULT_CONTRACTS_KEY, String(v));
+    showAlert(`Default contracts set to ${v}.`, 'Saved');
+}
+
+function saveCompactTableFromSettings(enabled) {
+    localStorage.setItem(COMPACT_TABLE_KEY, enabled ? '1' : '0');
+    populateTradeLog(document.getElementById('tradeLogTableBody') ? getFilteredTrades() : null);
 }
 
 function closeSettings() {
     const modal = document.getElementById('settingsModal');
     if (modal) modal.style.display = 'none';
+}
+
+// ---- AI Chat (OpenAI-powered) ----
+const AI_CHAT_KEY = 'tradeJournalAiChat';
+const OPENAI_KEY = 'tradeJournalOpenAIKey';
+const USER_NAME_KEY = 'tradeJournalUserName';
+
+function getOpenAIKey() {
+    return localStorage.getItem(OPENAI_KEY) || '';
+}
+
+function setOpenAIKey(key) {
+    if (key) localStorage.setItem(OPENAI_KEY, key.trim());
+    else localStorage.removeItem(OPENAI_KEY);
+}
+
+function updateAiChatSetupUI() {
+    const setup = document.getElementById('aiChatSetup');
+    const hasKey = !!getOpenAIKey();
+    if (setup) setup.hidden = hasKey;
+}
+
+window.saveOpenAIKeyFromSettings = function saveOpenAIKeyFromSettings() {
+    const input = document.getElementById('settingsOpenAIKey');
+    const key = input ? input.value.trim() : '';
+    if (!key || key.startsWith('••••')) {
+        showAlert('Paste your OpenAI API key first.', 'API Key Needed');
+        return;
+    }
+    setOpenAIKey(key);
+    if (input) input.value = '';
+    updateAiChatSetupUI();
+    showAlert('API key saved. Trade AI is ready.', 'Connected');
+};
+
+window.saveOpenAIKeyFromChat = function saveOpenAIKeyFromChat() {
+    const input = document.getElementById('aiChatKeyInput');
+    const key = input ? input.value.trim() : '';
+    if (!key) {
+        showAlert('Paste your OpenAI API key first.', 'API Key Needed');
+        return;
+    }
+    setOpenAIKey(key);
+    if (input) input.value = '';
+    updateAiChatSetupUI();
+    showAlert('Connected! Ask me anything about your trades.', 'Ready');
+};
+
+function getUserName() {
+    return localStorage.getItem(USER_NAME_KEY) || 'Trader';
+}
+
+function setUserName(name) {
+    localStorage.setItem(USER_NAME_KEY, (name || 'Trader').trim() || 'Trader');
+}
+
+window.saveUserNameFromSettings = function saveUserNameFromSettings() {
+    const input = document.getElementById('settingsUserName');
+    setUserName(input ? input.value : 'Trader');
+    showAlert('Name saved.', 'Saved');
+    const greeting = document.getElementById('aiChatGreeting');
+    if (greeting) greeting.textContent = `${getTimeGreeting()}, ${getUserName()}`;
+};
+
+function getTimeGreeting() {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+}
+
+function loadAiChatHistory() {
+    try {
+        const raw = localStorage.getItem(AI_CHAT_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveAiChatHistory(messages) {
+    localStorage.setItem(AI_CHAT_KEY, JSON.stringify(messages.slice(-40)));
+}
+
+function getYesterdayDateStr() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().slice(0, 10);
+}
+
+function buildTradeContextForAI() {
+    const list = trades || [];
+    if (!list.length) return 'The user has no trades logged yet.';
+
+    const net = sumNetProfit(list);
+    const wins = list.filter(t => getNetProfit(t) > 0);
+    const losses = list.filter(t => getNetProfit(t) < 0);
+    const winRate = ((wins.length / list.length) * 100).toFixed(1);
+    const grossProfit = wins.reduce((s, t) => s + getNetProfit(t), 0);
+    const grossLoss = Math.abs(losses.reduce((s, t) => s + getNetProfit(t), 0));
+    const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : 'N/A';
+
+    const bySymbol = {};
+    list.forEach(t => {
+        const sym = extractBaseTicker(t.symbol);
+        if (!bySymbol[sym]) bySymbol[sym] = { count: 0, pl: 0, wins: 0 };
+        bySymbol[sym].count++;
+        bySymbol[sym].pl += getNetProfit(t);
+        if (getNetProfit(t) >= 0) bySymbol[sym].wins++;
+    });
+    const topSymbols = Object.entries(bySymbol)
+        .map(([sym, s]) => ({ sym, ...s, winRate: ((s.wins / s.count) * 100).toFixed(0) }))
+        .sort((a, b) => b.pl - a.pl)
+        .slice(0, 8);
+
+    const recent = [...list]
+        .sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || ''))
+        .slice(0, 15)
+        .map(t => ({
+            date: t.date,
+            time: t.time,
+            symbol: t.symbol,
+            type: t.type || '',
+            netPL: getNetProfit(t),
+            contracts: getTradeContractCount(t),
+            notes: (t.notes || '').slice(0, 120)
+        }));
+
+    return JSON.stringify({
+        totalTrades: list.length,
+        netPL: net,
+        winRate: `${winRate}%`,
+        profitFactor,
+        totalFees: sumFees(list),
+        topSymbols,
+        recentTrades: recent
+    });
+}
+
+function formatAiMarkdown(text) {
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+}
+
+function isOpenAIUnavailableError(err) {
+    const msg = (err?.message || String(err)).toLowerCase();
+    return /quota|billing|insufficient|exceeded|rate limit|invalid api key|incorrect api key|authentication/.test(msg);
+}
+
+function analyzeBestSetups() {
+    const map = {};
+    (trades || []).forEach(t => {
+        const sym = extractBaseTicker(t.symbol);
+        if (!map[sym]) map[sym] = { wins: 0, losses: 0, pl: 0, count: 0 };
+        const net = getNetProfit(t);
+        map[sym].count++;
+        map[sym].pl += net;
+        if (net >= 0) map[sym].wins++; else map[sym].losses++;
+    });
+    const ranked = Object.entries(map)
+        .map(([sym, s]) => ({ sym, ...s, winRate: s.count ? (s.wins / s.count * 100) : 0 }))
+        .sort((a, b) => b.pl - a.pl);
+    if (!ranked.length) return 'You have no trades logged yet. Add some trades and I can analyze your best setups.';
+    const top = ranked.slice(0, 5);
+    let msg = '**Your best setups by net P/L:**\n\n';
+    top.forEach((s, i) => {
+        msg += `${i + 1}. **${s.sym}** — ${formatProfit(s.pl)} across ${s.count} trades (${s.winRate.toFixed(0)}% win rate)\n`;
+    });
+    const best = ranked[0];
+    msg += `\nYour strongest ticker so far is **${best.sym}**. Consider focusing on setups you know well there.`;
+    return msg;
+}
+
+function analyzeYesterday() {
+    const y = getYesterdayDateStr();
+    const dayTrades = (trades || []).filter(t => t.date === y);
+    if (!dayTrades.length) {
+        const recent = [...(trades || [])].sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || ''));
+        if (!recent.length) return 'No trades in your journal yet.';
+        const lastDate = recent[0].date;
+        const lastDay = recent.filter(t => t.date === lastDate);
+        const pl = sumNetProfit(lastDay);
+        let msg = `No trades yesterday. Your most recent session was **${formatTradeDate(lastDate)}** (${formatProfit(pl)}).\n\n`;
+        lastDay.forEach(t => {
+            msg += `• ${t.symbol} ${formatTime12h(t.time)} — ${formatProfit(getNetProfit(t))}\n`;
+        });
+        return msg;
+    }
+    const pl = sumNetProfit(dayTrades);
+    const wins = dayTrades.filter(t => getNetProfit(t) >= 0).length;
+    let msg = `**Yesterday (${formatTradeDate(y)}):** ${formatProfit(pl)} · ${dayTrades.length} trades · ${wins}W / ${dayTrades.length - wins}L\n\n`;
+    dayTrades.forEach(t => {
+        msg += `• **${t.symbol}** ${formatTime12h(t.time)} — ${formatProfit(getNetProfit(t))} (${t.type || '—'})\n`;
+    });
+    return msg;
+}
+
+function analyzeMistakes() {
+    const list = trades || [];
+    if (!list.length) return 'Log more trades and I can spot repeating mistakes.';
+    const losses = list.filter(t => getNetProfit(t) < 0);
+    if (!losses.length) return 'No losing trades yet — great start! Keep following your rules.';
+
+    const bySymbol = {};
+    const byHour = {};
+    losses.forEach(t => {
+        const sym = extractBaseTicker(t.symbol);
+        bySymbol[sym] = (bySymbol[sym] || 0) + 1;
+        const h = (t.time || '09:30').split(':')[0];
+        byHour[h] = (byHour[h] || 0) + 1;
+    });
+    const topSym = Object.entries(bySymbol).sort((a, b) => b[1] - a[1])[0];
+    const topHour = Object.entries(byHour).sort((a, b) => b[1] - a[1])[0];
+    const repeatSymbol = topSym && topSym[1] >= 2;
+    const repeatHour = topHour && topHour[1] >= 2;
+
+    let msg = '**Patterns in your losses:**\n\n';
+    if (repeatSymbol) msg += `• You lose most often on **${topSym[0]}** (${topSym[1]} losing trades)\n`;
+    if (repeatHour) {
+        const h = parseInt(topHour[0], 10);
+        msg += `• Most losses cluster around **${formatTime12h(`${h}:00`)}** (${topHour[1]} trades)\n`;
+    }
+    if (!repeatSymbol && !repeatHour) msg += '• Losses are spread out — check if you\'re oversizing or trading outside your best hours.\n';
+    const avgLoss = losses.reduce((s, t) => s + getNetProfit(t), 0) / losses.length;
+    msg += `• Average loss size: **${formatProfit(avgLoss)}**\n`;
+    msg += '\n**Suggestion:** Cut size or skip setups on your worst symbol/time until win rate improves.';
+    return msg;
+}
+
+function buildGamePlan() {
+    const list = trades || [];
+    if (!list.length) return 'Add trades to your journal first, then I can build a game plan from your data.';
+    const wins = list.filter(t => getNetProfit(t) > 0);
+    const winRate = list.length ? (wins.length / list.length * 100) : 0;
+    const bestSym = Object.entries(
+        list.reduce((m, t) => {
+            const s = extractBaseTicker(t.symbol);
+            m[s] = (m[s] || 0) + getNetProfit(t);
+            return m;
+        }, {})
+    ).sort((a, b) => b[1] - a[1])[0];
+
+    let msg = '**Game plan for your next session:**\n\n';
+    msg += `1. **Focus** — Trade only A+ setups${bestSym ? ` on **${bestSym[0]}** (your best net P/L ticker)` : ''}.\n`;
+    msg += `2. **Risk** — Keep position size consistent. Your win rate is **${winRate.toFixed(0)}%**.\n`;
+    msg += `3. **Rules** — Stop after 2 consecutive losses or your daily loss limit.\n`;
+    msg += `4. **Review** — Log every trade with notes so we can refine this plan.\n`;
+    return msg;
+}
+
+function summarizePerformance() {
+    const list = trades || [];
+    if (!list.length) return 'No trades yet. Start logging and I\'ll summarize your performance.';
+    const net = sumNetProfit(list);
+    const wins = list.filter(t => getNetProfit(t) > 0).length;
+    const winRate = (wins / list.length * 100).toFixed(1);
+    const grossProfit = list.filter(t => getNetProfit(t) > 0).reduce((s, t) => s + getNetProfit(t), 0);
+    const grossLoss = Math.abs(list.filter(t => getNetProfit(t) < 0).reduce((s, t) => s + getNetProfit(t), 0));
+    const pf = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : '∞';
+    return `**Overall performance**\n\n• Net P/L: **${formatProfit(net)}**\n• Trades: **${list.length}**\n• Win rate: **${winRate}%**\n• Profit factor: **${pf}**\n• Fees paid: **${formatMoney(sumFees(list))}**`;
+}
+
+function analyzeAccountGoal(question) {
+    const list = trades || [];
+    if (!list.length) return 'Log some trades first and I can estimate how long it might take to hit your goal.';
+
+    const goalMatch = question.match(/\$?\s*([\d,]+(?:\.\d+)?)\s*k?/i);
+    let goal = 1000;
+    if (goalMatch) {
+        const raw = parseFloat(goalMatch[1].replace(/,/g, ''));
+        goal = /k/i.test(goalMatch[0]) ? raw * 1000 : raw;
+    }
+
+    const currentNet = sumNetProfit(list);
+    const remaining = goal - currentNet;
+
+    if (remaining <= 0) {
+        return `**You've already hit ${formatProfit(goal)}** in net P/L (current: **${formatProfit(currentNet)}**). Nice work — consider raising your target or focusing on consistency.`;
+    }
+
+    const byDay = {};
+    list.forEach(t => {
+        if (!t.date) return;
+        byDay[t.date] = (byDay[t.date] || 0) + getNetProfit(t);
+    });
+    const days = Object.keys(byDay).sort();
+    const dailyPLs = days.map(d => byDay[d]);
+    const avgDaily = dailyPLs.reduce((s, v) => s + v, 0) / dailyPLs.length;
+
+    if (avgDaily <= 0) {
+        return `**Goal: ${formatProfit(goal)}** · Current net P/L: **${formatProfit(currentNet)}** · Still need **${formatProfit(remaining)}**\n\nYour average trading day is **${formatProfit(avgDaily)}**, so I can't project a timeline yet. Focus on consistency first — once your average day is positive, ask again.`;
+    }
+
+    const tradingDaysNeeded = Math.ceil(remaining / avgDaily);
+    const calendarWeeks = Math.ceil((tradingDaysNeeded / 5) * 7 / 7);
+
+    let msg = `**Path to ${formatProfit(goal)} in net P/L**\n\n`;
+    msg += `• Current net P/L: **${formatProfit(currentNet)}**\n`;
+    msg += `• Remaining: **${formatProfit(remaining)}**\n`;
+    msg += `• Avg per trading day: **${formatProfit(avgDaily)}** (across ${days.length} days)\n`;
+    msg += `• Est. trading days needed: **~${tradingDaysNeeded}**\n`;
+    msg += `• Rough calendar time: **~${calendarWeeks} week${calendarWeeks === 1 ? '' : 's'}** (assuming ~5 trading days/week)\n\n`;
+    msg += `_This is based on your journal averages — actual results will vary. Keep size consistent and stick to your best setups._`;
+    return msg;
+}
+
+function answerWithLocalAI(question) {
+    const q = question.toLowerCase();
+    if (/best setup|best ticker|best symbol|what.*trade/.test(q)) return analyzeBestSetups();
+    if (/yesterday|last session|recent day/.test(q)) return analyzeYesterday();
+    if (/mistake|repeat|pattern|losing|bad habit/.test(q)) return analyzeMistakes();
+    if (/game plan|tomorrow|plan for|next session/.test(q)) return buildGamePlan();
+    if (/summar|overview|performance|how am i|how'm i|win rate|profit factor|net p/.test(q)) return summarizePerformance();
+    if (/how long|until|reach|goal|account|1000|\$1,?000|1k/.test(q)) return analyzeAccountGoal(question);
+    return null;
+}
+
+function localAiFallbackHint() {
+    return `I can answer from your journal data. Try:\n\n• "Show my best setups"\n• "Review yesterday's trades"\n• "What mistakes am I repeating?"\n• "How long until I have $1000?"\n• "Summarize my performance"\n\nAdd billing to your OpenAI account (or a new API key in Settings) for open-ended AI chat.`;
+}
+
+async function callOpenAIChat(userMessage, history) {
+    const key = getOpenAIKey();
+    if (!key) throw new Error('No API key — connect OpenAI on the AI Chat page or in Settings.');
+
+    const prior = history
+        .filter(m => !m.loading && m.content)
+        .slice(-12)
+        .map(m => ({ role: m.role, content: m.content }));
+
+    const messages = [
+        {
+            role: 'system',
+            content: `You are Trade AI, an expert trading coach inside a personal options trade journal app. The user is ${getUserName()}.
+
+Always ground answers in their actual journal data below. Be direct, practical, and conversational — not robotic. Use bullet points when listing trades or stats. Reference specific symbols, dates, and dollar amounts from their data.
+
+JOURNAL DATA (JSON):
+${buildTradeContextForAI()}`
+        },
+        ...prior,
+        { role: 'user', content: userMessage }
+    ];
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`
+        },
+        body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages,
+            max_tokens: 800,
+            temperature: 0.65
+        })
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `API error ${res.status}`);
+    }
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || 'No response.';
+}
+
+function renderAiChatMessages(messages) {
+    const thread = document.getElementById('aiChatThread');
+    const hero = document.getElementById('aiChatHero');
+    const bar = document.getElementById('aiChatComposerBar');
+    if (!thread) return;
+
+    const hasMessages = messages.length > 0;
+    if (hero) hero.hidden = hasMessages;
+    if (bar) bar.hidden = !hasMessages;
+    thread.hidden = !hasMessages;
+
+    thread.innerHTML = messages.filter(m => !m.loading).map(m => `
+        <div class="ai-chat-msg ai-chat-msg--${m.role}">
+            ${m.role === 'assistant' ? '<div class="ai-chat-msg-avatar">📈</div>' : ''}
+            <div class="ai-chat-bubble">${m.role === 'assistant' ? formatAiMarkdown(m.content) : escapeHtml(m.content)}</div>
+        </div>
+    `).join('') + (messages.some(m => m.loading) ? '<div class="ai-chat-msg ai-chat-msg--assistant"><div class="ai-chat-msg-avatar">📈</div><div class="ai-chat-bubble ai-chat-bubble--typing">Thinking…</div></div>' : '');
+
+    thread.scrollTop = thread.scrollHeight;
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function sendAiMessage(text) {
+    const msg = (text || '').trim();
+    if (!msg) return;
+
+    const history = loadAiChatHistory();
+    history.push({ role: 'user', content: msg });
+    history.push({ role: 'assistant', content: '', loading: true });
+    saveAiChatHistory(history);
+    renderAiChatMessages(history);
+
+    let reply;
+
+    try {
+        if (getOpenAIKey()) {
+            reply = await callOpenAIChat(msg, history.filter(m => !m.loading));
+        } else {
+            reply = answerWithLocalAI(msg);
+            if (!reply) reply = localAiFallbackHint();
+        }
+    } catch (err) {
+        if (isOpenAIUnavailableError(err)) {
+            reply = answerWithLocalAI(msg);
+            if (!reply) {
+                reply = `OpenAI quota/billing issue — using journal mode instead.\n\n${localAiFallbackHint()}`;
+            } else {
+                reply += '\n\n_(OpenAI unavailable — answered from your journal data.)_';
+            }
+        } else {
+            reply = answerWithLocalAI(msg);
+            if (reply) {
+                reply += '\n\n_(OpenAI error — answered from your journal data.)_';
+            } else {
+                reply = `Something went wrong: ${err.message}`;
+            }
+        }
+    }
+
+    const updated = loadAiChatHistory().filter(m => !m.loading);
+    updated.push({ role: 'assistant', content: reply });
+    saveAiChatHistory(updated);
+    renderAiChatMessages(updated);
+}
+
+window.sendAiChatMessage = sendAiMessage;
+
+function initAiChat() {
+    const heroInput = document.getElementById('aiChatInput');
+    const barInput = document.getElementById('aiChatInputBar');
+    if (!heroInput && !barInput) return;
+
+    const greeting = document.getElementById('aiChatGreeting');
+    if (greeting) greeting.textContent = `${getTimeGreeting()}, ${getUserName()}`;
+
+    updateAiChatSetupUI();
+
+    const history = loadAiChatHistory();
+    renderAiChatMessages(history);
+
+    const bindInput = (input, btn) => {
+        if (!input) return;
+        const send = () => {
+            sendAiMessage(input.value);
+            input.value = '';
+            input.style.height = 'auto';
+        };
+        btn?.addEventListener('click', send);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+            }
+        });
+        input.addEventListener('input', () => {
+            input.style.height = 'auto';
+            input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+        });
+    };
+
+    bindInput(heroInput, document.getElementById('aiChatSendBtn'));
+    bindInput(barInput, document.getElementById('aiChatSendBarBtn'));
+
+    document.querySelectorAll('.ai-chat-chip').forEach(chip => {
+        chip.addEventListener('click', () => sendAiMessage(chip.dataset.prompt));
+    });
 }
 
 // ---- Whole-page screenshot (camera on every page) ----
@@ -1870,57 +2641,55 @@ window.showPrompt = (msg, def = '', title = 'Input Required') => showNotificatio
 
 function populateTradeLog(filteredTrades = null) {
     const tableBody = document.getElementById('tradeLogTableBody');
-    const totalLabel = document.getElementById('totalTradesLabel');
     if (!tableBody) return;
+
+    const tableWrap = document.querySelector('.trade-log-table-wrap');
+    if (tableWrap) tableWrap.classList.toggle('trade-log-table-wrap--compact', isCompactTable());
 
     const dataToDisplay = filteredTrades || trades;
     tableBody.innerHTML = '';
 
-    if (totalLabel) {
-        totalLabel.textContent = `(${dataToDisplay.length} total)`;
-    }
-
     if (dataToDisplay.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="7" style="padding: 2rem; text-align: center; color: var(--text-muted);">No trades found for the selected range.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="11" style="padding: 2rem; text-align: center; color: var(--text-muted);">No trades found for the selected range.</td></tr>';
         return;
     }
 
+    const tradeExtremes = getTradeProfitExtremesForList(dataToDisplay);
+
     dataToDisplay.forEach((t) => {
         const row = document.createElement('tr');
-        row.style.borderBottom = '1px solid var(--border)';
-        row.style.cursor = 'pointer';
         row.className = 'trade-row-item';
 
         const netProfit = getNetProfit(t);
+        const grossProfit = getGrossProfit(t);
+        const netROI = getNetROI(t);
         const tradeType = t.type || (netProfit >= 0 ? 'Call' : 'Put');
+        const contracts = getTradeContractCount(t);
 
         row.innerHTML = `
-            <td style="padding: 1.2rem; color: var(--text-muted); font-size: 0.85rem;">
-                <div style="color: white; font-weight: 500; margin-bottom: 2px;">${t.date}</div>
-                <div style="font-size: 0.75rem;">${t.endTime ? `${t.time} - ${t.endTime.split('T')[1]}` : t.time}</div>
-            </td>
+            <td class="trade-col-date">${formatTradeDate(t.date)}</td>
+            <td class="trade-col-time">${formatTradeTimeFrame(t)}</td>
             <td>
-                <div class="ticker-badge" style="background: transparent; border: 1px solid var(--border); color: white; display: inline-flex;">
-                    <span style="font-weight: 800;">${t.symbol}</span>
-                    ${(t.strategy === 'Paper Trading' || t.isPaper) ? '<span style="margin-left: 8px; background: rgba(123, 97, 255, 0.1); color: #7b61ff; font-size: 0.6rem; padding: 2px 6px; border-radius: 4px; font-weight: 700;">PAPER</span>' : ''}
-                </div>
+                ${renderTickerBadgeHtml(t.symbol, (t.strategy === 'Paper Trading' || t.isPaper) ? '<span class="paper-tag">PAPER</span>' : '')}
             </td>
+            <td class="trade-col-ct">${contracts}</td>
             <td>
-                <span style="background: ${netProfit >= 0 ? 'rgba(0, 240, 168, 0.1)' : 'rgba(255, 77, 109, 0.1)'}; color: ${netProfit >= 0 ? 'var(--profit-green)' : 'var(--loss-red)'}; padding: 4px 12px; border-radius: 6px; font-size: 0.75rem; font-weight: 800; border: 1px solid ${netProfit >= 0 ? 'rgba(0, 240, 168, 0.2)' : 'rgba(255, 77, 109, 0.2)'};">
+                <span class="trade-status-badge ${netProfit >= 0 ? 'trade-status-badge--win' : 'trade-status-badge--loss'}">
                     ${netProfit >= 0 ? 'WIN' : 'LOSS'}
                 </span>
             </td>
-            <td style="font-weight: 600; font-size: 0.9rem; color: ${netProfit >= 0 ? 'var(--profit-green)' : 'var(--loss-red)'}; opacity: 0.8;">${tradeType}</td>
-            <td style="color: ${netProfit >= 0 ? 'var(--profit-green)' : 'var(--loss-red)'}; font-weight: 800; font-size: 1rem;">
+            <td class="trade-col-type" style="color: ${profitColor(netProfit)}">${tradeType}</td>
+            <td class="trade-col-pl" style="color: ${profitColor(grossProfit)}">${formatProfit(grossProfit)}</td>
+            <td class="trade-col-pl" style="color: ${profitColor(netProfit)}">
                 ${formatProfit(netProfit)}
-                <div style="font-size: 0.7rem; color: var(--text-muted); font-weight: 500; margin-top: 2px;">${getProfitFeeNote(t)}</div>
+                <div class="trade-fee-note">${getProfitFeeNote(t)}</div>
             </td>
-            <td style="color: var(--text-muted); font-size: 0.85rem;">${t.duration || '15m'}</td>
-            <td>
-                <div style="display: flex; gap: 8px;">
-                    <button class="btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;" onclick="event.stopPropagation(); showDayDetail('${t.date}')">Analytics</button>
-                    <button class="btn-secondary edit-btn-log" style="padding: 6px 12px; font-size: 0.75rem;" data-id="${t.id}">Edit</button>
-                    <button class="btn-secondary delete-btn-log" style="padding: 6px 12px; font-size: 0.75rem; color: var(--loss-red); border-color: rgba(255, 77, 109, 0.3);" data-id="${t.id}">Delete</button>
+            <td class="trade-col-roi" style="color: ${profitColor(netProfit)}">${formatROI(netROI)}</td>
+            <td class="trade-col-scale">${renderTradeScaleHtml(netProfit, tradeExtremes)}</td>
+            <td class="trade-col-actions">
+                <div class="trade-row-actions">
+                    <button class="btn-secondary edit-btn-log" data-id="${t.id}">Edit</button>
+                    <button class="btn-secondary delete-btn-log" data-id="${t.id}">Delete</button>
                 </div>
             </td>
         `;
@@ -2390,12 +3159,12 @@ function closeDailyChecklist() {
 // Cell color based on that day's net P/L, scaled to your biggest win/loss days.
 // Green = profit, red = loss, white = break-even, faint = no trades / non-trading day.
 function heatmapActivityColor(dayProfit, tradeCount, extremes) {
-    if (tradeCount === 0) return 'rgba(255,255,255,0.05)';
-    const intensity = Math.max(profitIntensity(dayProfit, extremes), 0.15);
-    const op = 0.2 + intensity * 0.8;
+    if (tradeCount === 0) return 'rgba(255,255,255,0.04)';
+    const intensity = Math.max(profitIntensity(dayProfit, extremes), 0.12);
+    const op = 0.28 + intensity * 0.72;
     if (dayProfit > 0) return `rgba(0, 240, 168, ${op})`;
     if (dayProfit < 0) return `rgba(255, 77, 109, ${op})`;
-    return 'rgba(255, 255, 255, 0.4)';
+    return 'rgba(255, 255, 255, 0.22)';
 }
 
 // Build GitHub-style columns, but only trading days (Mon–Fri). Each column is
@@ -2483,19 +3252,62 @@ function renderActivityHeatmap(grid, monthsBack) {
             const dayTrades = trades.filter(t => t.date === day.date);
             const tradeCount = dayTrades.length;
             const dayProfit = sumNetProfit(dayTrades);
-            const holiday = getHolidayName(day.date, new Date(day.date + 'T00:00:00').getFullYear());
-            cell.style.background = heatmapActivityColor(dayProfit, tradeCount, extremes);
-            if (tradeCount > 0) {
-                cell.title = `${day.date}: ${tradeCount} trade${tradeCount > 1 ? 's' : ''}, ${formatProfit(dayProfit)}`;
-            } else if (holiday) {
+            const year = new Date(day.date + 'T00:00:00').getFullYear();
+            const holiday = isMarketHoliday(day.date, year) ? getHolidayName(day.date, year) : '';
+
+            if (holiday && tradeCount === 0) {
+                cell.classList.add('is-holiday');
                 cell.title = `${day.date}: ${holiday} (market closed)`;
             } else {
-                cell.title = `${day.date}: no trades`;
+                cell.style.background = heatmapActivityColor(dayProfit, tradeCount, extremes);
+                if (tradeCount > 0) {
+                    cell.classList.add('has-trades');
+                    cell.title = `${day.date}: ${tradeCount} trade${tradeCount > 1 ? 's' : ''}, ${formatProfit(dayProfit)}`;
+                    cell.addEventListener('click', () => {
+                        window.location.href = `day-view.html?date=${day.date}`;
+                    });
+                } else {
+                    cell.title = `${day.date}: no trades`;
+                }
             }
+
             weekCol.appendChild(cell);
         });
         grid.appendChild(weekCol);
     });
+}
+
+function populateDashboardRecentTrades() {
+    const body = document.getElementById('dashboardRecentTradesBody');
+    if (!body) return;
+
+    const recent = [...(trades || [])]
+        .sort((a, b) => {
+            const d = (b.date || '').localeCompare(a.date || '');
+            if (d !== 0) return d;
+            return (b.time || '').localeCompare(a.time || '');
+        })
+        .slice(0, 7);
+
+    if (!recent.length) {
+        body.innerHTML = '<tr><td colspan="6" style="padding:1.5rem;text-align:center;color:var(--text-muted);">No trades yet — use Add Trade in the sidebar.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = recent.map(t => {
+        const net = getNetProfit(t);
+        const gross = getGrossProfit(t);
+        const roi = getNetROI(t);
+        const side = t.type || (net >= 0 ? 'Call' : 'Put');
+        return `<tr class="trade-row-item dashboard-trade-row" onclick="window.location.href='day-view.html?date=${t.date}'">
+            <td class="trade-col-date">${formatTradeDate(t.date)}</td>
+            <td><span class="ticker-badge trade-ticker-badge">${tickerLogoHtml(t.symbol || '')}<span>${t.symbol || '—'}</span></span></td>
+            <td class="trade-col-type" style="color:${profitColor(net)}">${side}</td>
+            <td class="trade-col-pl" style="color:${profitColor(gross)}">${formatProfit(gross)}</td>
+            <td class="trade-col-pl" style="color:${profitColor(net)}">${formatProfit(net)}</td>
+            <td class="trade-col-roi" style="color:${profitColor(net)}">${formatROI(roi)}</td>
+        </tr>`;
+    }).join('');
 }
 
 function populateProgressTracker() {
@@ -2603,7 +3415,9 @@ function refreshAllViews() {
         populateTradeLog();
     }
     updateDashboardStats();
+    populateDashboardRecentTrades();
     populateProgressTracker();
+    initCharts();
     initPerformanceCharts();
     if (typeof initReports === 'function') initReports();
     if (typeof initDayView === 'function') initDayView();
@@ -2645,6 +3459,24 @@ function syncStocklistDatalists() {
 function extractBaseTicker(symbol) {
     if (!symbol) return '';
     return symbol.trim().split(/\s+/)[0].toUpperCase();
+}
+
+function getTickerLogoUrl(symbol) {
+    const ticker = extractBaseTicker(symbol);
+    if (!ticker) return '';
+    return `https://financialmodelingprep.com/image-stock/${encodeURIComponent(ticker)}.png`;
+}
+
+function tickerLogoHtml(symbol, className = 'ticker-logo') {
+    const ticker = extractBaseTicker(symbol);
+    if (!ticker) return '';
+    const initial = ticker.charAt(0);
+    return `<img class="${className}" src="${getTickerLogoUrl(ticker)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling?.classList.remove('ticker-logo-fallback--hidden')"><span class="ticker-logo-fallback ticker-logo-fallback--hidden" aria-hidden="true">${initial}</span>`;
+}
+
+function renderTickerBadgeHtml(symbol, extraHtml = '') {
+    const label = symbol || '—';
+    return `<div class="ticker-badge trade-ticker-badge">${tickerLogoHtml(label)}<span>${label}</span>${extraHtml}</div>`;
 }
 
 function getFilterSymbolChoices() {
@@ -2713,13 +3545,6 @@ function getFilteredTrades() {
     return filtered;
 }
 
-// Open the native date calendar only when the box itself is clicked.
-function openDatePicker(input) {
-    if (input && typeof input.showPicker === 'function') {
-        try { input.showPicker(); } catch (e) { /* ignore */ }
-    }
-}
-
 // ---- Trade View filter popover (all filters optional, applied live) ----
 function toggleFilterPanel(forceClose) {
     const panel = document.getElementById('filterPanel');
@@ -2777,6 +3602,7 @@ function resetTradeFilters() {
     if (startInput) startInput.value = '';
     const endInput = document.getElementById('filterDateEnd');
     if (endInput) endInput.value = '';
+    updateFilterDateDisplay();
     document.querySelectorAll('#filterResultGroup button').forEach(b => b.classList.toggle('active', b.dataset.result === 'all'));
     document.querySelectorAll('#filterTypeGroup button').forEach(b => b.classList.toggle('active', b.dataset.type === 'all'));
     renderSymbolFilterList();
@@ -2785,9 +3611,52 @@ function resetTradeFilters() {
     updateFilterBadge();
 }
 
+function updateFilterDateDisplay() {
+    const pairs = [
+        ['filterDateStart', 'filterDateStartDisplay', 'Start date'],
+        ['filterDateEnd', 'filterDateEndDisplay', 'End date']
+    ];
+    pairs.forEach(([inputId, displayId, placeholder]) => {
+        const input = document.getElementById(inputId);
+        const display = document.getElementById(displayId);
+        if (!display) return;
+        if (input && input.value) {
+            display.textContent = formatTradeDate(input.value);
+            display.classList.add('has-value');
+        } else {
+            display.textContent = placeholder;
+            display.classList.remove('has-value');
+        }
+    });
+}
+
 function initTradeFilterUI() {
     const panel = document.getElementById('filterPanel');
     if (!panel) return;
+
+    const startInput = document.getElementById('filterDateStart');
+    const endInput = document.getElementById('filterDateEnd');
+    [startInput, endInput].forEach(input => {
+        if (!input) return;
+        input.addEventListener('change', () => {
+            updateFilterDateDisplay();
+            applyTradeFilters();
+        });
+    });
+
+    panel.querySelectorAll('.filter-date-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const input = document.getElementById(btn.dataset.for);
+            if (!input) return;
+            if (typeof input.showPicker === 'function') {
+                try { input.showPicker(); } catch (_) { /* ignore */ }
+            }
+        });
+    });
+
+    updateFilterDateDisplay();
 
     // Segmented toggles (Result / Type) apply instantly
     document.querySelectorAll('.segmented').forEach(group => {
@@ -2808,12 +3677,1014 @@ function initTradeFilterUI() {
     });
 }
 
+// ---- Trade Replay (bar-by-bar playback) ----
+const replayState = {
+    chart: null,
+    series: null,
+    vwapSeries: null,
+    emaSeries: null,
+    priceLines: [],
+    preCandles: [],
+    tradeCandles: [],
+    allCandles: [],
+    levels: null,
+    markers: [],
+    currentIndex: 0,
+    playing: false,
+    timer: null,
+    speed: 1,
+    intervalMin: 1,
+    selectedTradeId: null,
+    selectedTrade: null,
+    selectedDate: '',
+    dataSource: '',
+    loading: false,
+    needsFit: true,
+    resizeObs: null
+};
+
+function formatTime12h(timeStr) {
+    if (!timeStr) return '--';
+    const parts = timeStr.split(':').map(Number);
+    const h = parts[0] || 0;
+    const m = parts[1] || 0;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function parseTradeDateTime(dateStr, timeStr) {
+    const [y, mo, d] = (dateStr || '').split('-').map(Number);
+    const [h, mi] = (timeStr || '09:30').split(':').map(Number);
+    return new Date(y, mo - 1, d, h || 9, mi || 30, 0);
+}
+
+// Lightweight-charts treats timestamps as UTC — encode local wall-clock time so 9:46 shows as 9:46.
+function toChartTime(date) {
+    return Math.floor(Date.UTC(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate(),
+        date.getHours(),
+        date.getMinutes(),
+        date.getSeconds()
+    ) / 1000);
+}
+
+function addChartMinutes(chartTime, minutes) {
+    const d = new Date(chartTime * 1000);
+    d.setUTCMinutes(d.getUTCMinutes() + minutes);
+    return Math.floor(d.getTime() / 1000);
+}
+
+function formatChartWallTime(chartTime) {
+    const d = new Date(chartTime * 1000);
+    const h = d.getUTCHours();
+    const m = d.getUTCMinutes();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 || 12;
+    return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function getTradeEndDateTime(trade) {
+    if (trade.endTime && trade.endTime.includes('T')) {
+        const [datePart, timePart] = trade.endTime.split('T');
+        return parseTradeDateTime(datePart, timePart);
+    }
+    const start = parseTradeDateTime(trade.date, trade.time);
+    let mins = 15;
+    const hMatch = (trade.duration || '').match(/(\d+)h/);
+    const mMatch = (trade.duration || '').match(/(\d+)m/);
+    if (hMatch) mins = parseInt(hMatch[1], 10) * 60;
+    if (mMatch) mins = parseInt(mMatch[1], 10);
+    if (hMatch && mMatch) mins = parseInt(hMatch[1], 10) * 60 + parseInt(mMatch[1], 10);
+    return new Date(start.getTime() + mins * 60000);
+}
+
+const REPLAY_MARKET_TZ = 'America/New_York';
+
+function etWallToUnix(dateStr, hours, minutes) {
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    let guess = Date.UTC(y, mo - 1, d, hours + 4, minutes, 0);
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: REPLAY_MARKET_TZ,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+    });
+    for (let i = 0; i < 4; i++) {
+        const parts = formatter.formatToParts(new Date(guess));
+        const pick = (t) => parseInt(parts.find(p => p.type === t)?.value || '0', 10);
+        const diffMin = (hours * 60 + minutes) - (pick('hour') * 60 + pick('minute'));
+        if (diffMin === 0) break;
+        guess += diffMin * 60 * 1000;
+    }
+    return Math.floor(guess / 1000);
+}
+
+function tradeTimeToChartTime(dateStr, timeStr) {
+    const parts = (timeStr || '09:30').split(':').map(Number);
+    const [y, mo, d] = dateStr.split('-').map(Number);
+    return Math.floor(Date.UTC(y, mo - 1, d, parts[0] || 9, parts[1] || 30, 0) / 1000);
+}
+
+function tradeEndToChartTime(trade) {
+    if (trade.endTime && trade.endTime.includes('T')) {
+        const [datePart, timePart] = trade.endTime.split('T');
+        const [h, mi] = timePart.split(':').map(Number);
+        return tradeTimeToChartTime(datePart, `${h}:${mi}`);
+    }
+    const startCt = tradeTimeToChartTime(trade.date, trade.time);
+    let mins = 15;
+    const hMatch = (trade.duration || '').match(/(\d+)h/);
+    const mMatch = (trade.duration || '').match(/(\d+)m/);
+    if (hMatch) mins = parseInt(hMatch[1], 10) * 60;
+    if (mMatch) mins = parseInt(mMatch[1], 10);
+    if (hMatch && mMatch) mins = parseInt(hMatch[1], 10) * 60 + parseInt(mMatch[1], 10);
+    return addChartMinutes(startCt, mins);
+}
+
+function marketTsToChartTime(unixSec) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: REPLAY_MARKET_TZ,
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric',
+        hour12: false
+    }).formatToParts(new Date(unixSec * 1000));
+    const pick = (t) => parseInt(parts.find(p => p.type === t)?.value || '0', 10);
+    return Math.floor(Date.UTC(
+        pick('year'), pick('month') - 1, pick('day'),
+        pick('hour'), pick('minute'), pick('second')
+    ) / 1000);
+}
+
+function getMarketDayUnixRange(dateStr) {
+    return {
+        period1: etWallToUnix(dateStr, 4, 0),
+        period2: etWallToUnix(dateStr, 20, 0)
+    };
+}
+
+function resampleCandles(candles, intervalMin) {
+    if (intervalMin <= 1 || !candles.length) return candles;
+    const out = [];
+    for (let i = 0; i < candles.length; i += intervalMin) {
+        const chunk = candles.slice(i, i + intervalMin);
+        if (!chunk.length) continue;
+        out.push({
+            time: chunk[0].time,
+            open: chunk[0].open,
+            high: Math.max(...chunk.map(c => c.high)),
+            low: Math.min(...chunk.map(c => c.low)),
+            close: chunk[chunk.length - 1].close,
+            volume: chunk.reduce((s, c) => s + (c.volume || 0), 0)
+        });
+    }
+    return out;
+}
+
+function getPreviousTradingDay(dateStr) {
+    const d = new Date(`${dateStr}T12:00:00`);
+    d.setDate(d.getDate() - 1);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function calcEMA(candles, period = 8) {
+    if (!candles.length) return [];
+    const k = 2 / (period + 1);
+    let ema = candles[0].close;
+    return candles.map((c, i) => {
+        if (i > 0) ema = c.close * k + ema * (1 - k);
+        return { time: c.time, value: ema };
+    });
+}
+
+function calcVwap(candles, sessionStartTime) {
+    let cumVol = 0;
+    let cumTpVol = 0;
+    const out = [];
+    candles.forEach(c => {
+        if (c.time < sessionStartTime) return;
+        const vol = c.volume > 0 ? c.volume : 1;
+        const tp = (c.high + c.low + c.close) / 3;
+        cumVol += vol;
+        cumTpVol += tp * vol;
+        out.push({ time: c.time, value: cumTpVol / cumVol });
+    });
+    return out;
+}
+
+function computeReplayLevels(allCandles, dateStr, priorHigh, priorLow) {
+    const preStart = tradeTimeToChartTime(dateStr, '4:00');
+    const mktOpen = tradeTimeToChartTime(dateStr, '9:30');
+    const premarket = allCandles.filter(c => c.time >= preStart && c.time < mktOpen);
+    const pmHigh = premarket.length ? Math.max(...premarket.map(c => c.high)) : null;
+    const pmLow = premarket.length ? Math.min(...premarket.map(c => c.low)) : null;
+
+    const prices = allCandles.flatMap(c => [c.high, c.low]);
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const psychLevels = [];
+    const startLvl = Math.floor(minP / 10) * 10;
+    const endLvl = Math.ceil(maxP / 10) * 10;
+    for (let p = startLvl; p <= endLvl; p += 10) {
+        if (p % 10 === 0) psychLevels.push(p);
+    }
+    return { pmHigh, pmLow, priorHigh, priorLow, psychLevels };
+}
+
+function clearReplayPriceLines() {
+    if (!replayState.series || !replayState.priceLines.length) {
+        replayState.priceLines = [];
+        return;
+    }
+    replayState.priceLines.forEach(pl => {
+        try { replayState.series.removePriceLine(pl); } catch (e) { /* ignore */ }
+    });
+    replayState.priceLines = [];
+}
+
+function applyReplayPriceLines(levels) {
+    clearReplayPriceLines();
+    if (!replayState.series || !levels) return;
+    const add = (price, color, title, style = 0, width = 1) => {
+        if (!Number.isFinite(price)) return;
+        replayState.priceLines.push(replayState.series.createPriceLine({
+            price,
+            color,
+            lineWidth: width,
+            lineStyle: style,
+            axisLabelVisible: true,
+            title
+        }));
+    };
+    add(levels.pmHigh, '#ff9800', 'PM High');
+    add(levels.pmLow, '#ff9800', 'PM Low');
+    add(levels.priorHigh, '#2962ff', 'PD High');
+    add(levels.priorLow, '#2962ff', 'PD Low');
+    (levels.psychLevels || []).forEach(p => add(p, '#26a69a', String(p), 2, 1));
+}
+
+function sanitizeMarketCandles(candles) {
+    if (!candles.length) return candles;
+    return candles.map((c, i) => {
+        const prevClose = i > 0 ? candles[i - 1].close : c.open;
+        const maxMove = Math.max(prevClose * 0.012, 0.5);
+        let { open, high, low, close } = c;
+
+        const bodyHigh = Math.max(open, close);
+        const bodyLow = Math.min(open, close);
+        const capHigh = Math.max(open, close, prevClose) + maxMove;
+        const capLow = Math.min(open, close, prevClose) - maxMove;
+
+        if (high > capHigh) high = bodyHigh + maxMove * 0.35;
+        if (low < capLow) low = bodyLow - maxMove * 0.35;
+
+        high = Math.max(high, bodyHigh);
+        low = Math.min(low, bodyLow);
+        return { ...c, open, high, low, close };
+    });
+}
+
+function updateSessionOverlays() {
+    const overlay = document.getElementById('replaySessionOverlay');
+    const trade = replayState.selectedTrade;
+    if (!overlay || !replayState.chart || !trade?.date) {
+        if (overlay) overlay.innerHTML = '';
+        return;
+    }
+    const ts = replayState.chart.timeScale();
+    const dateStr = trade.date;
+    const preStart = tradeTimeToChartTime(dateStr, '4:00');
+    const mktOpen = tradeTimeToChartTime(dateStr, '9:30');
+    const postStart = tradeTimeToChartTime(dateStr, '16:00');
+    const postEnd = tradeTimeToChartTime(dateStr, '20:00');
+    const all = replayState.allCandles?.length
+        ? replayState.allCandles
+        : [...(replayState.preCandles || []), ...(replayState.tradeCandles || [])];
+    const barSec = Math.max(60, (replayState.intervalMin || 1) * 60);
+
+    const coordForTime = (t) => {
+        let x = ts.timeToCoordinate(t);
+        if (x != null) return x;
+        if (!all.length) return null;
+        let nearest = all[0].time;
+        let bestDiff = Math.abs(nearest - t);
+        all.forEach(c => {
+            const d = Math.abs(c.time - t);
+            if (d < bestDiff) { bestDiff = d; nearest = c.time; }
+        });
+        return ts.timeToCoordinate(nearest);
+    };
+
+    const buildRegion = (from, to, cls, candlesInRange) => {
+        let x1;
+        let x2;
+        if (candlesInRange.length) {
+            x1 = ts.timeToCoordinate(candlesInRange[0].time);
+            const last = candlesInRange[candlesInRange.length - 1];
+            x2 = ts.timeToCoordinate(last.time);
+            if (x2 != null) {
+                const endCoord = ts.timeToCoordinate(last.time + barSec) ?? ts.timeToCoordinate(to);
+                if (endCoord != null) x2 = Math.max(x2, endCoord);
+                else x2 += 10;
+            }
+        } else {
+            x1 = coordForTime(from);
+            x2 = coordForTime(to);
+        }
+        if (x1 == null || x2 == null) return '';
+        const left = Math.min(x1, x2);
+        const width = Math.max(2, Math.abs(x2 - x1));
+        return `<div class="${cls}" style="left:${left}px;width:${width}px"></div>`;
+    };
+
+    const preCandles = all.filter(c => c.time >= preStart && c.time < mktOpen);
+    const postCandles = all.filter(c => c.time >= postStart && c.time <= postEnd);
+    const regions = [
+        buildRegion(preStart, mktOpen, 'replay-shade-premarket', preCandles),
+        buildRegion(postStart, postEnd, 'replay-shade-postmarket', postCandles)
+    ];
+    overlay.innerHTML = regions.filter(Boolean).join('');
+}
+
+function scheduleSessionOverlayUpdate() {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(updateSessionOverlays);
+    });
+}
+
+function setInitialReplayViewport(visibleCount) {
+    if (!replayState.chart || visibleCount < 1) return;
+    const ts = replayState.chart.timeScale();
+    const windowSize = Math.min(visibleCount, 140);
+    ts.setVisibleLogicalRange({
+        from: Math.max(0, visibleCount - windowSize),
+        to: visibleCount + 12
+    });
+    scheduleSessionOverlayUpdate();
+}
+
+function updateReplayIndicators(visible) {
+    if (!visible.length || !replayState.vwapSeries || !replayState.emaSeries) return;
+    const sessionOpen = replayState.selectedTrade
+        ? tradeTimeToChartTime(replayState.selectedTrade.date, '9:30')
+        : 0;
+    replayState.emaSeries.setData(calcEMA(visible, 8));
+    replayState.vwapSeries.setData(calcVwap(visible, sessionOpen));
+}
+
+async function fetchMarketChartJson(url) {
+    const errors = [];
+    const tryDirect = async () => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    };
+    const tryAllOrigins = async () => {
+        const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+        const res = await fetch(proxy);
+        if (!res.ok) throw new Error(`Proxy HTTP ${res.status}`);
+        const wrap = await res.json();
+        if (!wrap?.contents) throw new Error('Empty proxy response');
+        return JSON.parse(wrap.contents);
+    };
+    for (const fn of [tryDirect, tryAllOrigins]) {
+        try {
+            return await fn();
+        } catch (err) {
+            errors.push(err.message);
+        }
+    }
+    throw new Error(errors.join(' · '));
+}
+
+async function fetchYahooMarketCandles(ticker, dateStr) {
+    const { period1, period2 } = getMarketDayUnixRange(dateStr);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&period1=${period1}&period2=${period2}&includePrePost=true`;
+    const data = await fetchMarketChartJson(url);
+    const err = data?.chart?.error;
+    if (err) throw new Error(err.description || 'Market data unavailable');
+    const result = data?.chart?.result?.[0];
+    if (!result) throw new Error('No market data for this date');
+
+    const ts = result.timestamp || [];
+    const q = result.indicators?.quote?.[0] || {};
+    const candles = [];
+    for (let i = 0; i < ts.length; i++) {
+        const open = q.open?.[i];
+        const high = q.high?.[i];
+        const low = q.low?.[i];
+        const close = q.close?.[i];
+        if (![open, high, low, close].every(v => Number.isFinite(v))) continue;
+        candles.push({
+            time: marketTsToChartTime(ts[i]),
+            open, high, low, close,
+            volume: q.volume?.[i] || 0
+        });
+    }
+    if (!candles.length) throw new Error('No candles returned for this session');
+    return sanitizeMarketCandles(candles);
+}
+
+function splitCandlesForTrade(allCandles, trade) {
+    const entryTime = tradeTimeToChartTime(trade.date, trade.time);
+    const exitTime = tradeEndToChartTime(trade);
+    const pre = allCandles.filter(c => c.time < entryTime);
+    let tradeBars = allCandles.filter(c => c.time >= entryTime && c.time <= exitTime);
+    if (!tradeBars.length) {
+        const after = allCandles.filter(c => c.time >= entryTime);
+        tradeBars = after.slice(0, Math.max(8, Math.ceil((exitTime - entryTime) / 60)));
+    }
+    return { pre, trade: tradeBars };
+}
+
+function setReplayDataBadge(text, tone = 'live') {
+    const el = document.getElementById('replayDataBadge');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'replay-data-badge' + (tone === 'warn' ? ' replay-data-badge--warn' : tone === 'load' ? ' replay-data-badge--load' : '');
+}
+
+function setReplayChartStatus(message, showRetry = false) {
+    const el = document.getElementById('replayChartStatus');
+    if (!el) return;
+    if (!message) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+    }
+    el.hidden = false;
+    el.innerHTML = `
+        <p>${escapeHtml(message)}</p>
+        ${showRetry ? '<button type="button" class="replay-status-retry" id="replayRetryBtn">Retry</button>' : ''}
+    `;
+    if (showRetry) {
+        document.getElementById('replayRetryBtn')?.addEventListener('click', () => {
+            if (replayState.selectedTrade) loadReplayTrade(replayState.selectedTrade);
+        });
+    }
+}
+
+let replayLoadId = 0;
+
+async function buildReplayCandles(trade, intervalMin) {
+    const ticker = extractBaseTicker(trade.symbol);
+    const raw = await fetchYahooMarketCandles(ticker, trade.date);
+    let priorHigh = null;
+    let priorLow = null;
+    try {
+        const prevDate = getPreviousTradingDay(trade.date);
+        const prev = await fetchYahooMarketCandles(ticker, prevDate);
+        priorHigh = Math.max(...prev.map(c => c.high));
+        priorLow = Math.min(...prev.map(c => c.low));
+    } catch (e) { /* prior day optional */ }
+
+    const resampled = resampleCandles(raw, intervalMin);
+    const levels = computeReplayLevels(resampled, trade.date, priorHigh, priorLow);
+    const { pre, trade: tradeBars } = splitCandlesForTrade(resampled, trade);
+    if (!tradeBars.length) throw new Error('No candles during your trade window');
+    return { pre, trade: tradeBars, all: resampled, levels, source: 'yahoo', ticker };
+}
+
+function findCandleAtTime(candles, chartTime) {
+    let best = candles[0];
+    let bestDiff = Infinity;
+    candles.forEach(c => {
+        const diff = Math.abs(c.time - chartTime);
+        if (diff < bestDiff) { bestDiff = diff; best = c; }
+    });
+    return best;
+}
+
+function getReplayDates() {
+    const dates = [...new Set((trades || []).map(t => t.date).filter(Boolean))].sort();
+    return dates;
+}
+
+function getTradesForReplayDate(dateStr) {
+    return (trades || []).filter(t => t.date === dateStr).sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+}
+
+function pauseReplay() {
+    replayState.playing = false;
+    if (replayState.timer) {
+        clearInterval(replayState.timer);
+        replayState.timer = null;
+    }
+    const icon = document.getElementById('replayPlayIcon');
+    if (icon) icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+}
+
+function getVisibleReplayCandles() {
+    const tradeSlice = replayState.currentIndex < 0
+        ? []
+        : replayState.tradeCandles.slice(0, replayState.currentIndex + 1);
+    return [...replayState.preCandles, ...tradeSlice];
+}
+
+function updateReplayOhlc(candle) {
+    const set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = Number.isFinite(val) ? val.toFixed(2) : '—';
+    };
+    if (!candle) {
+        set('replayO', null); set('replayH', null); set('replayL', null); set('replayC', null);
+        return;
+    }
+    set('replayO', candle.open);
+    set('replayH', candle.high);
+    set('replayL', candle.low);
+    set('replayC', candle.close);
+}
+
+function renderReplayFrame() {
+    if (!replayState.series) return;
+    const visible = getVisibleReplayCandles();
+    if (!visible.length) {
+        replayState.series.setData([]);
+        return;
+    }
+
+    const ts = replayState.chart?.timeScale();
+    const keepRange = ts && !replayState.needsFit ? ts.getVisibleLogicalRange() : null;
+
+    replayState.series.setData(visible);
+    if (replayState.markers.length) replayState.series.setMarkers(replayState.markers);
+    updateReplayIndicators(visible);
+
+    if (keepRange) {
+        try { ts.setVisibleLogicalRange(keepRange); } catch (e) { /* ignore */ }
+    }
+
+    const progress = document.getElementById('replayProgress');
+    if (progress) progress.value = String(replayState.currentIndex);
+
+    const label = document.getElementById('replayProgressLabel');
+    const total = replayState.tradeCandles.length;
+    if (label) {
+        const shown = replayState.currentIndex < 0 ? 0 : replayState.currentIndex + 1;
+        label.textContent = `${shown} / ${total}`;
+    }
+
+    const last = visible[visible.length - 1];
+    updateReplayOhlc(last);
+
+    const meta = document.getElementById('replayChartMeta');
+    if (meta && last) meta.textContent = formatChartWallTime(last.time);
+
+    if (replayState.chart && visible.length) {
+        if (replayState.needsFit) {
+            setInitialReplayViewport(visible.length);
+            replayState.needsFit = false;
+        } else {
+            scheduleSessionOverlayUpdate();
+        }
+    }
+}
+
+function setReplayIndex(idx) {
+    const max = Math.max(0, replayState.tradeCandles.length - 1);
+    replayState.currentIndex = Math.max(-1, Math.min(idx, max));
+    renderReplayFrame();
+}
+
+function replayStepForward() {
+    if (replayState.currentIndex >= replayState.tradeCandles.length - 1) {
+        pauseReplay();
+        return;
+    }
+    setReplayIndex(replayState.currentIndex + 1);
+}
+
+function replayStepBack() {
+    setReplayIndex(replayState.currentIndex - 1);
+}
+
+function toggleReplayPlay() {
+    if (!replayState.tradeCandles.length) return;
+    if (replayState.playing) {
+        pauseReplay();
+        return;
+    }
+    if (replayState.currentIndex >= replayState.tradeCandles.length - 1) {
+        setReplayIndex(-1);
+    }
+    replayState.playing = true;
+    const icon = document.getElementById('replayPlayIcon');
+    if (icon) icon.innerHTML = '<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>';
+    const delay = 1000 / replayState.speed;
+    replayState.timer = setInterval(() => {
+        if (replayState.currentIndex >= replayState.tradeCandles.length - 1) {
+            pauseReplay();
+            return;
+        }
+        replayStepForward();
+    }, delay);
+}
+
+function renderReplayTradeDetails(trade) {
+    const container = document.getElementById('replayTradeDetails');
+    if (!container) return;
+    if (!trade) {
+        container.innerHTML = '<p class="replay-empty">Select a trade to view details.</p>';
+        return;
+    }
+    const net = getNetProfit(trade);
+    const end = getTradeEndDateTime(trade);
+    const entry = parseFloat(trade.ask) || 0;
+    const exit = parseFloat(trade.closePremium);
+    const ct = getTradeContractCount(trade);
+    const rows = [
+        ['Underlying', extractBaseTicker(trade.symbol)],
+        ['Type', trade.type || '—'],
+        ['Date', formatTradeDate(trade.date)],
+        ['Option entry', `${formatTime12h(trade.time)} @ $${entry.toFixed(2)} premium`],
+        ['Option exit', `${formatTime12h(`${end.getHours()}:${end.getMinutes()}`)} @ ${Number.isFinite(exit) ? '$' + exit.toFixed(2) + ' premium' : '—'}`],
+        ['Contracts', String(ct)],
+        ['Duration', trade.duration || '—'],
+        ['Net P/L', formatProfit(net)],
+        ['Fees', formatMoney(getTradeFees(trade))],
+        ['Chart data', replayState.dataSource === 'yahoo' ? 'Live stock (Yahoo Finance)' : 'Estimated (no market feed)'],
+        ['Notes', (trade.notes || '—').slice(0, 200)]
+    ];
+    container.innerHTML = rows.map(([k, v]) =>
+        `<div class="replay-detail-row"><span class="replay-detail-key">${k}</span><span class="replay-detail-val">${escapeHtml(String(v))}</span></div>`
+    ).join('');
+}
+
+function renderReplayWatchlistPanel() {
+    const list = document.getElementById('replayWatchlist');
+    if (!list) return;
+    const tickers = getWatchlist();
+    if (!tickers.length) {
+        list.innerHTML = '<li class="replay-empty">No tickers on watchlist.</li>';
+        return;
+    }
+    list.innerHTML = tickers.map(t =>
+        `<li class="replay-watchlist-item">${tickerLogoHtml(t, 'ticker-logo watchlist-logo')}<span>${t}</span></li>`
+    ).join('');
+}
+
+function switchReplayPanel(panelId) {
+    document.querySelectorAll('.replay-rail-btn[data-replay-panel]').forEach(btn => {
+        btn.classList.toggle('replay-rail-btn--active', btn.dataset.replayPanel === panelId);
+    });
+    document.querySelectorAll('.replay-panel-pane').forEach(pane => {
+        const active = pane.dataset.replayPane === panelId;
+        pane.hidden = !active;
+        pane.classList.toggle('replay-panel-pane--active', active);
+    });
+}
+
+function updateReplaySideHeader(trade) {
+    const ticker = document.getElementById('replaySideTicker');
+    const type = document.getElementById('replaySideType');
+    const pnl = document.getElementById('replaySidePnl');
+    if (!trade) {
+        if (ticker) ticker.textContent = '—';
+        if (type) type.textContent = '—';
+        if (pnl) { pnl.textContent = '—'; pnl.style.color = ''; }
+        return;
+    }
+    const net = getNetProfit(trade);
+    if (ticker) ticker.textContent = extractBaseTicker(trade.symbol);
+    if (type) {
+        type.textContent = (trade.type || 'TRADE').toUpperCase();
+        type.className = 'replay-symbol-badge' + (trade.type === 'Put' ? ' replay-symbol-badge--put' : '');
+    }
+    if (pnl) {
+        pnl.textContent = formatProfit(net);
+        pnl.style.color = profitColor(net);
+    }
+}
+
+function renderReplayExecutions(trade) {
+    const container = document.getElementById('replayExecutions');
+    const title = document.getElementById('replayExecutionsTitle');
+    if (!container) return;
+    if (!trade) {
+        if (title) title.textContent = 'Executions';
+        container.innerHTML = '<p class="replay-empty">Select a trade to see entries and exits.</p>';
+        return;
+    }
+    const ct = getTradeContractCount(trade);
+    const optEntry = parseFloat(trade.ask) || 0;
+    const optExit = parseFloat(trade.closePremium);
+    const end = getTradeEndDateTime(trade);
+    const endTimeStr = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}:00`;
+
+    if (title) title.textContent = 'Executions';
+    container.innerHTML = `
+        <div class="replay-exec-row replay-exec-row--entry">
+            <span class="replay-exec-time">${trade.time || '--'}:00</span>
+            <span class="replay-exec-price">${optEntry.toFixed(2)}</span>
+            <span class="replay-exec-qty">+${ct}</span>
+        </div>
+        <div class="replay-exec-row replay-exec-row--exit">
+            <span class="replay-exec-time">${endTimeStr}</span>
+            <span class="replay-exec-price">${Number.isFinite(optExit) ? optExit.toFixed(2) : '—'}</span>
+            <span class="replay-exec-qty">-${ct}</span>
+        </div>
+        <p class="replay-exec-note">Prices = option premium · Chart = underlying stock</p>
+    `;
+}
+
+function loadReplayTrade(trade) {
+    if (!trade) return;
+    pauseReplay();
+    const loadId = ++replayLoadId;
+    const dayTrades = getTradesForReplayDate(replayState.selectedDate);
+    const idx = dayTrades.indexOf(trade);
+    replayState.selectedTradeId = trade.id || `replay-${idx}`;
+    replayState.selectedTrade = trade;
+    replayState.preCandles = [];
+    replayState.tradeCandles = [];
+    replayState.markers = [];
+    replayState.loading = true;
+    setReplayDataBadge('Loading market data…', 'load');
+    renderReplayFrame();
+
+    const net = getNetProfit(trade);
+    const sym = extractBaseTicker(trade.symbol);
+    const title = document.getElementById('replayChartTitle');
+    const pnl = document.getElementById('replayChartPnl');
+    if (title) title.textContent = `${sym} · ${formatTradeDate(trade.date)}`;
+    if (pnl) {
+        pnl.textContent = formatProfit(net);
+        pnl.style.color = profitColor(net);
+    }
+    updateReplaySideHeader(trade);
+    renderReplayExecutions(trade);
+    renderReplayTradeDetails(trade);
+    renderReplayTradeList();
+
+    buildReplayCandles(trade, replayState.intervalMin).then(result => {
+        if (loadId !== replayLoadId) return;
+        replayState.loading = false;
+        replayState.dataSource = result.source;
+        replayState.preCandles = result.pre;
+        replayState.tradeCandles = result.trade;
+        replayState.allCandles = result.all;
+        replayState.levels = result.levels;
+        replayState.needsFit = true;
+        setReplayChartStatus('');
+        applyReplayPriceLines(result.levels);
+
+        const all = [...result.pre, ...result.trade];
+        const entryTime = tradeTimeToChartTime(trade.date, trade.time);
+        const exitTime = tradeEndToChartTime(trade);
+        const entryBar = findCandleAtTime(all, entryTime);
+        const exitBar = findCandleAtTime(all, exitTime);
+
+        replayState.markers = [
+            { time: entryBar?.time || entryTime, position: 'belowBar', color: '#26a69a', shape: 'arrowUp', text: 'Entry' },
+            { time: exitBar?.time || exitTime, position: 'aboveBar', color: '#ef5350', shape: 'arrowDown', text: 'Exit' }
+        ];
+
+        const progress = document.getElementById('replayProgress');
+        if (progress) {
+            progress.min = '-1';
+            progress.max = String(Math.max(0, replayState.tradeCandles.length - 1));
+            progress.value = '-1';
+        }
+        replayState.currentIndex = -1;
+
+        setReplayDataBadge(`Live · ${result.ticker} · ${replayState.intervalMin}m · Yahoo Finance`);
+        renderReplayTradeDetails(trade);
+        renderReplayFrame();
+    }).catch(err => {
+        if (loadId !== replayLoadId) return;
+        replayState.loading = false;
+        replayState.dataSource = '';
+        replayState.preCandles = [];
+        replayState.tradeCandles = [];
+        replayState.markers = [];
+        replayState.allCandles = [];
+        replayState.levels = null;
+        clearReplayPriceLines();
+        replayState.series?.setData([]);
+        replayState.vwapSeries?.setData([]);
+        replayState.emaSeries?.setData([]);
+        updateSessionOverlays();
+        setReplayDataBadge('Market data failed', 'warn');
+        setReplayChartStatus(
+            `Could not load real ${sym} stock candles for this date. ${err.message}. 1m data is only available for recent trading days.`,
+            true
+        );
+        updateReplayOhlc(null);
+    });
+}
+
+function renderReplayTradeList() {
+    const list = document.getElementById('replayTradeList');
+    if (!list) return;
+    const dayTrades = getTradesForReplayDate(replayState.selectedDate);
+    if (!dayTrades.length) {
+        list.innerHTML = '<p class="replay-empty">No trades on this day.</p>';
+        return;
+    }
+    list.innerHTML = dayTrades.map((t, i) => {
+        const net = getNetProfit(t);
+        const end = getTradeEndDateTime(t);
+        const tradeKey = t.id || `replay-${i}`;
+        const active = tradeKey === replayState.selectedTradeId ? ' replay-trade-item--active' : '';
+        const checked = tradeKey === replayState.selectedTradeId ? 'checked' : '';
+        return `
+            <label class="replay-trade-item${active}">
+                <input type="radio" name="replayTrade" value="${tradeKey}" ${checked}>
+                <div class="replay-trade-item-body">
+                    <div class="replay-trade-item-top">
+                        <span class="replay-trade-symbol">${t.symbol}</span>
+                        <span class="replay-trade-pnl" style="color:${profitColor(net)}">${formatProfit(net)}</span>
+                    </div>
+                    <div class="replay-trade-item-time">${formatTime12h(t.time)} – ${formatTime12h(`${end.getHours()}:${end.getMinutes()}`)}</div>
+                </div>
+            </label>
+        `;
+    }).join('');
+
+    list.querySelectorAll('input[name="replayTrade"]').forEach(input => {
+        input.addEventListener('change', () => {
+            const trade = dayTrades.find((t, i) => (t.id || `replay-${i}`) === input.value);
+            if (trade) loadReplayTrade(trade);
+        });
+    });
+}
+
+function initReplayChart() {
+    const wrap = document.querySelector('.replay-chart-wrap');
+    const el = document.getElementById('replayChart');
+    if (!el || typeof LightweightCharts === 'undefined') return;
+
+    replayState.chart = LightweightCharts.createChart(el, {
+        layout: { background: { color: '#131722' }, textColor: '#787b86' },
+        grid: {
+            vertLines: { color: 'rgba(42, 46, 57, 0.8)' },
+            horzLines: { color: 'rgba(42, 46, 57, 0.8)' }
+        },
+        rightPriceScale: { borderColor: '#2a2e39', autoScale: true },
+        timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: false, rightOffset: 12 },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: { color: 'rgba(120, 123, 134, 0.5)', width: 1, style: 2 },
+            horzLine: { color: 'rgba(120, 123, 134, 0.5)', width: 1, style: 2 }
+        },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+        handleScale: { mouseWheel: true, pinch: true }
+    });
+
+    replayState.series = replayState.chart.addCandlestickSeries({
+        upColor: '#26a69a',
+        downColor: '#ffffff',
+        borderVisible: false,
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ffffff'
+    });
+
+    replayState.vwapSeries = replayState.chart.addLineSeries({
+        color: '#ff9800',
+        lineWidth: 2,
+        title: 'VWAP',
+        priceLineVisible: false,
+        lastValueVisible: true
+    });
+
+    replayState.emaSeries = replayState.chart.addLineSeries({
+        color: '#2962ff',
+        lineWidth: 1,
+        title: 'EMA 8',
+        priceLineVisible: false,
+        lastValueVisible: true
+    });
+
+    const resize = () => {
+        if (!replayState.chart || !el) return;
+        const w = el.clientWidth || wrap?.clientWidth || 600;
+        const h = el.clientHeight || wrap?.clientHeight || 480;
+        replayState.chart.applyOptions({ width: w, height: h });
+        scheduleSessionOverlayUpdate();
+    };
+
+    if (wrap && typeof ResizeObserver !== 'undefined') {
+        replayState.resizeObs = new ResizeObserver(resize);
+        replayState.resizeObs.observe(wrap);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    replayState.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+        scheduleSessionOverlayUpdate();
+    });
+}
+
+function setReplayInterval(min) {
+    replayState.intervalMin = min;
+    document.querySelectorAll('.replay-pill[data-interval]').forEach(btn => {
+        btn.classList.toggle('replay-pill--active', parseInt(btn.dataset.interval, 10) === min);
+    });
+    if (replayState.selectedTrade) loadReplayTrade(replayState.selectedTrade);
+}
+
+function initTradeReplay() {
+    const chartEl = document.getElementById('replayChart');
+    if (!chartEl) return;
+
+    initReplayChart();
+    renderReplayWatchlistPanel();
+
+    document.querySelectorAll('.replay-rail-btn[data-replay-panel]').forEach(btn => {
+        btn.addEventListener('click', () => switchReplayPanel(btn.dataset.replayPanel));
+    });
+
+    const dates = getReplayDates();
+    const datePicker = document.getElementById('replayDatePicker');
+    if (datePicker) {
+        if (dates.length) {
+            datePicker.innerHTML = dates.map(d =>
+                `<option value="${d}">${formatTradeDate(d)}</option>`
+            ).join('');
+            replayState.selectedDate = dates[dates.length - 1];
+            datePicker.value = replayState.selectedDate;
+        } else {
+            const now = new Date().toISOString().slice(0, 10);
+            replayState.selectedDate = now;
+            datePicker.innerHTML = `<option value="${now}">${formatTradeDate(now)}</option>`;
+            datePicker.value = now;
+        }
+        datePicker.addEventListener('change', () => {
+            replayState.selectedDate = datePicker.value;
+            replayState.selectedTradeId = null;
+            replayState.selectedTrade = null;
+            pauseReplay();
+            renderReplayTradeList();
+            renderReplayExecutions(null);
+            renderReplayTradeDetails(null);
+            updateReplaySideHeader(null);
+            const dayTrades = getTradesForReplayDate(replayState.selectedDate);
+            if (dayTrades.length) loadReplayTrade(dayTrades[0]);
+            else {
+                replayState.preCandles = [];
+                replayState.tradeCandles = [];
+                replayState.series?.setData([]);
+                updateReplayOhlc(null);
+                document.getElementById('replayChartTitle').textContent = 'No trades this day';
+                document.getElementById('replayChartPnl').textContent = '—';
+            }
+        });
+    }
+
+    document.getElementById('replayPlayBtn')?.addEventListener('click', toggleReplayPlay);
+    document.getElementById('replayForwardBtn')?.addEventListener('click', () => { pauseReplay(); replayStepForward(); });
+    document.getElementById('replayBackBtn')?.addEventListener('click', () => { pauseReplay(); replayStepBack(); });
+    document.getElementById('replayStartBtn')?.addEventListener('click', () => { pauseReplay(); setReplayIndex(-1); });
+    document.getElementById('replayEndBtn')?.addEventListener('click', () => { pauseReplay(); setReplayIndex(replayState.tradeCandles.length - 1); });
+
+    document.getElementById('replayProgress')?.addEventListener('input', (e) => {
+        pauseReplay();
+        setReplayIndex(parseInt(e.target.value, 10) || 0);
+    });
+
+    document.getElementById('replaySpeed')?.addEventListener('input', (e) => {
+        replayState.speed = parseFloat(e.target.value) || 1;
+        const label = document.getElementById('replaySpeedLabel');
+        if (label) label.textContent = `${replayState.speed}x`;
+        if (replayState.playing) {
+            pauseReplay();
+            toggleReplayPlay();
+        }
+    });
+
+    document.querySelectorAll('.replay-pill[data-interval]').forEach(btn => {
+        btn.addEventListener('click', () => setReplayInterval(parseInt(btn.dataset.interval, 10) || 1));
+    });
+
+    document.getElementById('replayOpenTvBtn')?.addEventListener('click', () => {
+        const trade = replayState.selectedTrade || (trades || []).find(t => t.id === replayState.selectedTradeId);
+        const sym = extractBaseTicker(trade?.symbol || 'TSLA');
+        window.open(`https://www.tradingview.com/chart/?symbol=NASDAQ:${sym}&interval=1`, '_blank');
+    });
+
+    renderReplayTradeList();
+    const dayTrades = getTradesForReplayDate(replayState.selectedDate);
+    if (dayTrades.length) loadReplayTrade(dayTrades[0]);
+    else {
+        renderReplayExecutions(null);
+        renderReplayTradeDetails(null);
+        updateReplaySideHeader(null);
+    }
+}
+
 function renderWatchlistPanel() {
     const container = document.getElementById('watchlistItems');
     if (!container) return;
     container.innerHTML = getWatchlist().map(ticker => `
         <li class="watchlist-item">
-            <span>${ticker}</span>
+            <a class="watchlist-ticker" href="https://www.tradingview.com/chart/?symbol=NASDAQ:${ticker}" target="_blank" rel="noopener noreferrer" title="Open ${ticker} on TradingView">
+                ${tickerLogoHtml(ticker, 'ticker-logo watchlist-logo')}
+                <span>${ticker}</span>
+            </a>
             <button type="button" class="watchlist-remove-btn" onclick="removeWatchlistTicker('${ticker}')" title="Remove ${ticker}">×</button>
         </li>
     `).join('');
@@ -2886,8 +4757,10 @@ function initInfoTooltips() {
 document.addEventListener('DOMContentLoaded', async () => {
     renderSidebar();
     applySavedTheme();
+    applyPageHeader();
     injectScreenshotButton();
     initTradeFilterUI();
+    initTradeModalBackdropClose();
 
     await syncJournalFromRepo();
 
@@ -2911,6 +4784,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     populateCalendar();
     populateTradeLog(document.getElementById('tradeLogTableBody') ? getFilteredTrades() : null);
     updateDashboardStats();
+    populateDashboardRecentTrades();
     populateProgressTracker();
 
     if (window.location.hash === '#add-modal') {
@@ -2918,9 +4792,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     // Auto-detect page type
-    if (document.getElementById('dayTradeTableBody')) initDayView();
+    if (document.getElementById('dayTradeDetails')) initDayView();
     if (document.getElementById('reportsDashboard')) initReports();
     if (document.getElementById('notebookEntries')) populateNotebook();
+    if (document.getElementById('replayChart')) initTradeReplay();
+    if (document.getElementById('aiChatHero')) initAiChat();
 
     // Notification listeners are now attached dynamically in showNotification()
 
@@ -3083,6 +4959,92 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
+function getDailyProfitMap() {
+    const map = {};
+    (trades || []).forEach(t => {
+        if (!t.date) return;
+        map[t.date] = (map[t.date] || 0) + getNetProfit(t);
+    });
+    return map;
+}
+
+function renderDayViewMiniCalendar(viewDate) {
+    const panel = document.getElementById('dayMiniCalendarPanel');
+    if (!panel) return;
+
+    const [vy, vm] = viewDate.split('-').map(Number);
+    let calYear = vy;
+    let calMonth = vm - 1;
+    const dailyPL = getDailyProfitMap();
+
+    const render = () => {
+        const first = new Date(calYear, calMonth, 1);
+        const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+        const mondayFirstDay = (first.getDay() + 6) % 7;
+        const lastPos = (daysInMonth - 1) + mondayFirstDay;
+        const totalWeeks = Math.floor(lastPos / 7) + 1;
+        const monthLabel = first.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+        let cells = '';
+        for (let w = 0; w < totalWeeks; w++) {
+            for (let col = 0; col < 5; col++) {
+                const pos = w * 7 + col;
+                const d = pos - mondayFirstDay + 1;
+
+                if (d < 1 || d > daysInMonth) {
+                    cells += '<span class="day-pick-cell day-pick-cell--empty"></span>';
+                    continue;
+                }
+
+                const ds = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+                if (isMarketHoliday(ds, calYear)) {
+                    const holidayName = getHolidayName(ds, calYear);
+                    cells += `<span class="day-pick-cell day-pick-cell--holiday" title="${holidayName} — Market Closed">${d}</span>`;
+                    continue;
+                }
+
+                const pl = dailyPL[ds];
+                const hasTrades = pl !== undefined;
+                const isSelected = ds === viewDate;
+                let tone = 'flat';
+                if (hasTrades) tone = pl > 0 ? 'win' : pl < 0 ? 'loss' : 'flat';
+                cells += `<button type="button" class="day-pick-cell day-pick-cell--${tone}${isSelected ? ' day-pick-cell--selected' : ''}" data-date="${ds}">${d}</button>`;
+            }
+        }
+
+        panel.innerHTML = `
+            <div class="day-pick-header">
+                <button type="button" class="day-pick-nav" id="dayPickPrev" aria-label="Previous month">‹</button>
+                <span class="day-pick-month">${monthLabel}</span>
+                <button type="button" class="day-pick-nav" id="dayPickNext" aria-label="Next month">›</button>
+            </div>
+            <div class="day-pick-dow day-pick-dow--weekdays">
+                <span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span>
+            </div>
+            <div class="day-pick-grid day-pick-grid--weekdays">${cells}</div>
+        `;
+
+        panel.querySelector('#dayPickPrev')?.addEventListener('click', () => {
+            calMonth--;
+            if (calMonth < 0) { calMonth = 11; calYear--; }
+            render();
+        });
+        panel.querySelector('#dayPickNext')?.addEventListener('click', () => {
+            calMonth++;
+            if (calMonth > 11) { calMonth = 0; calYear++; }
+            render();
+        });
+        panel.querySelectorAll('.day-pick-cell[data-date]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                window.location.href = `day-view.html?date=${btn.dataset.date}`;
+            });
+        });
+    };
+
+    render();
+}
+
 function initDayView() {
     const urlParams = new URLSearchParams(window.location.search);
     let viewDate = urlParams.get('date');
@@ -3094,6 +5056,8 @@ function initDayView() {
 
     const dayTrades = (trades || []).filter(t => t.date === viewDate);
 
+    renderDayViewMiniCalendar(viewDate);
+
     // Header Date
     const dayDateElem = document.getElementById('dayDate');
     if (dayDateElem) {
@@ -3103,55 +5067,7 @@ function initDayView() {
         dayDateElem.textContent = dateObj.toLocaleDateString('en-US', options);
     }
 
-    // Main Stats
-    const netPL = sumNetProfit(dayTrades);
-    const dayFees = sumFees(dayTrades);
-
-    const netPLElem = document.getElementById('dayNetPL');
-    if (netPLElem) {
-        netPLElem.textContent = formatProfit(netPL);
-        netPLElem.style.color = netPL >= 0 ? 'var(--profit-green)' : 'var(--loss-red)';
-    }
-
-    const dayFeesSub = document.getElementById('dayFeesSub');
-    if (dayFeesSub) dayFeesSub.textContent = formatFeesLabel(dayTrades);
-
-    const volElem = document.getElementById('dayVolume');
-    const volLabel = document.getElementById('dayVolumeLabel');
-    if (volElem) {
-        if (dayTrades.length === 1) {
-            if (volLabel) volLabel.textContent = 'Symbol';
-            volElem.textContent = dayTrades[0].symbol;
-        } else {
-            if (volLabel) volLabel.textContent = 'Volume';
-            volElem.textContent = dayTrades.length;
-        }
-    }
-
-    const winsElem = document.getElementById('dayWins');
-    const winsLabel = document.getElementById('dayWinsLabel');
-    if (winsElem) {
-        const wins = dayTrades.filter(t => getNetProfit(t) >= 0).length;
-        if (dayTrades.length === 1) {
-            if (winsLabel) winsLabel.textContent = 'Result';
-            const singleNet = getNetProfit(dayTrades[0]);
-            winsElem.textContent = singleNet >= 0 ? 'WIN' : 'LOSS';
-            winsElem.style.color = singleNet >= 0 ? 'var(--profit-green)' : 'var(--loss-red)';
-        } else {
-            if (winsLabel) winsLabel.textContent = 'Wins / Losses';
-            winsElem.textContent = `${wins} / ${dayTrades.length - wins}`;
-            winsElem.style.color = 'inherit';
-        }
-    }
-
-    // Update Trade Cost card
-    const totalDayCost = dayTrades.reduce((sum, t) => sum + (parseFloat(t.ask) || 0) * (parseInt(t.contracts) || 1) * 100, 0);
-    const dayTradeCostElem = document.getElementById('dayTradeCost');
-    if (dayTradeCostElem) {
-        dayTradeCostElem.textContent = `$${totalDayCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-    }
-
-    // --- Trade Analysis Section: Image + Notes below chart ---
+    // --- Trade Analysis Section ---
     const detailsSection = document.getElementById('dayTradeDetails');
     if (detailsSection) {
         detailsSection.innerHTML = '';
@@ -3163,9 +5079,10 @@ function initDayView() {
 
             dayTrades.forEach(t => {
                 const netProfit = getNetProfit(t);
+                const grossProfit = getGrossProfit(t);
                 const tradeFees = getTradeFees(t);
-                const cost = (parseFloat(t.ask) || 0) * (parseInt(t.contracts) || 1) * 100;
-                const roi = cost > 0 ? ((netProfit / cost) * 100).toFixed(1) : '—';
+                const cost = (parseFloat(t.ask) || 0) * getTradeContractCount(t) * 100;
+                const roi = getNetROI(t);
 
                 let endTimeDisplay = '';
                 if (t.endTime && t.endTime.includes('T')) {
@@ -3219,8 +5136,20 @@ function initDayView() {
                             <span class="value" style="color:${premiumMoveColor};">${parseFloat(premiumMove) >= 0 ? '+' : ''}$${premiumMove}</span>
                         </div>` : ''}
                         <div class="trade-metric-pill">
+                            <span class="label">Gross P/L</span>
+                            <span class="value" style="color:${profitColor(grossProfit)};">${formatProfit(grossProfit)}</span>
+                        </div>
+                        <div class="trade-metric-pill">
+                            <span class="label">Net P/L</span>
+                            <span class="value" style="color:${profitColor(netProfit)};">${formatProfit(netProfit)}</span>
+                        </div>
+                        <div class="trade-metric-pill">
+                            <span class="label">Trade Cost</span>
+                            <span class="value">$${cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div class="trade-metric-pill">
                             <span class="label">Net ROI</span>
-                            <span class="value" style="color:${netProfit >= 0 ? 'var(--profit-green)' : 'var(--loss-red)'};">${roi}${roi !== '—' ? '%' : ''}</span>
+                            <span class="value" style="color:${profitColor(netProfit)};">${formatROI(roi)}</span>
                         </div>
                         <div class="trade-metric-pill">
                             <span class="label">TOS Fees</span>
@@ -3285,153 +5214,22 @@ function initDayView() {
 
                 detailsSection.appendChild(card);
             });
-        }
-    }
-
-    // --- Trade Table ---
-    const tbody = document.getElementById('dayTradeTableBody');
-    if (tbody) {
-        tbody.innerHTML = '';
-        if (dayTrades.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="padding: 2rem; text-align: center; color: var(--text-muted);">No trades logged for today.</td></tr>';
         } else {
-            dayTrades.forEach(t => {
-                const netProfit = getNetProfit(t);
-                // Build time frame string: "09:30 – 10:15"
-                let endTimeDisplay = '';
-                if (t.endTime && t.endTime.includes('T')) {
-                    endTimeDisplay = t.endTime.split('T')[1].substring(0, 5);
-                } else if (t.endTime) {
-                    endTimeDisplay = t.endTime.substring(0, 5);
-                }
-                const timeFrame = endTimeDisplay ? `${t.time} – ${endTimeDisplay}` : t.time;
-
-                // Calculate ROI
-                const cost = (parseFloat(t.ask) || 0) * (parseInt(t.contracts) || 1) * 100;
-                const roi = cost > 0 ? ((netProfit / cost) * 100).toFixed(1) : '—';
-
-                const row = document.createElement('tr');
-                row.style.borderBottom = '1px solid var(--border)';
-                row.innerHTML = `
-                    <td style="padding: 1rem; font-size:0.85rem;">
-                        <div style="color:white; font-weight:500;">${timeFrame}</div>
-                        <div style="color:var(--text-muted); font-size:0.72rem; margin-top:2px;">${t.duration || ''}</div>
-                    </td>
-                    <td>
-                        <div class="ticker-badge" style="background: transparent; color: white; border: 1px solid var(--border); box-shadow: none;">
-                            <span style="font-weight:800;">${t.symbol}</span>
-                        </div>
-                    </td>
-                    <td>
-                        <span style="background:${netProfit >= 0 ? 'rgba(0,240,168,0.1)' : 'rgba(255,77,109,0.1)'}; color:${netProfit >= 0 ? 'var(--profit-green)' : 'var(--loss-red)'}; padding:3px 10px; border-radius:5px; font-size:0.75rem; font-weight:800;">${t.type || 'CALL'}</span>
-                    </td>
-                    <td style="color: var(--text-muted); font-size: 0.75rem;">WEEKLY</td>
-                    <td style="color: ${netProfit >= 0 ? 'var(--profit-green)' : 'var(--loss-red)'}; font-weight: 700;">${formatProfit(netProfit)}</td>
-                    <td style="color:var(--text-muted);">${roi}${roi !== '—' ? '%' : ''}</td>
-                    <td>
-                        <div style="display: flex; gap: 8px;">
-                            <button class="btn-secondary edit-btn-init" style="padding: 4px 10px; font-size: 0.7rem;">Edit</button>
-                            <button class="btn-secondary delete-btn-init" style="padding: 4px 10px; font-size: 0.7rem; color: var(--loss-red); border-color: rgba(255, 77, 109, 0.3);">Delete</button>
-                        </div>
-                    </td>
-                `;
-
-                const deleteBtn = row.querySelector('.delete-btn-init');
-                const editBtn = row.querySelector('.edit-btn-init');
-
-                if (editBtn) {
-                    editBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        openEditModal(t.id);
-                    });
-                }
-
-                if (deleteBtn) {
-                    deleteBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        deleteTrade(t.id);
-                    });
-                }
-
-                row.addEventListener('click', (e) => {
-                    if (e.target.closest('button')) return;
-                    window.location.href = `day-view.html?date=${t.date}`;
-                });
-
-                tbody.appendChild(row);
-            });
+            detailsSection.innerHTML = '<p class="day-empty-msg">No trades logged for this day. Pick a trading day on the calendar.</p>';
         }
-    }
-
-    // Chart logic
-    const ctx = document.getElementById('intraDayChart');
-    if (ctx) {
-        let labels = [];
-        let dataPoints = [];
-
-        if (dayTrades.length === 1) {
-            const path = generatePricePath(dayTrades[0]);
-            labels = path.labels;
-            dataPoints = path.dataPoints;
-        } else {
-            labels = dayTrades.length > 0 ? dayTrades.map(t => t.time) : ['9:30', '16:00'];
-            dataPoints = dayTrades.length > 0 ? dayTrades.map(t => getNetProfit(t)) : [0, 0];
-        }
-
-        const isWinner = netPL >= 0;
-
-        new Chart(ctx.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: dataPoints,
-                    borderColor: isWinner ? '#00f0a8' : '#ff4d6d',
-                    backgroundColor: isWinner ? 'rgba(0, 240, 168, 0.05)' : 'rgba(255, 77, 109, 0.05)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointRadius: (ctx) => (ctx.dataIndex === 0 || ctx.dataIndex === dataPoints.length - 1) ? 6 : 0,
-                    pointBackgroundColor: (ctx) => ctx.dataIndex === 0 ? '#ffffff' : (isWinner ? '#0ef0a8' : '#ff4d6d'),
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { intersect: false, mode: 'index' },
-                scales: {
-                    x: { grid: { display: false }, ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } } },
-                    y: {
-                        position: 'right',
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { color: 'rgba(255,255,255,0.4)', font: { size: 10 } }
-                    }
-                },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: '#1a1a1a',
-                        callbacks: { label: (c) => `Price: $${c.parsed.y.toFixed(2)}` }
-                    }
-                }
-            }
-        });
     }
 
     // Setup Nav Buttons
-    const navBtns = document.querySelectorAll('.calendar-nav-btn');
-    if (navBtns.length >= 2) {
+    const prevBtn = document.getElementById('dayNavPrev');
+    const nextBtn = document.getElementById('dayNavNext');
+    if (prevBtn && nextBtn) {
         const [y, m, d] = viewDate.split('-').map(Number);
-
-        navBtns[0].onclick = () => {
+        prevBtn.onclick = () => {
             const prev = new Date(y, m - 1, d - 1);
             const prevStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
             window.location.href = `day-view.html?date=${prevStr}`;
         };
-
-        navBtns[1].onclick = () => {
+        nextBtn.onclick = () => {
             const next = new Date(y, m - 1, d + 1);
             const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
             window.location.href = `day-view.html?date=${nextStr}`;

@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="../CSS/trade.css">
 </head>
 
-<body class="dashboard-body">
+<body class="dashboard-body calendar-page">
     <!-- Sidebar is rendered by JS (renderSidebar) -->
     <aside class="sidebar"></aside>
 
@@ -23,7 +23,71 @@
             </div>
         </header>
 
-        <section class="calendar-view" id="calendarCard" style="min-height: 560px; margin-top: 1.5rem;">
+        <!-- Top Stats Row -->
+        <section class="stats-grid stats-grid--rich stats-grid--calendar">
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Net P/L <span class="stat-info" data-tooltip="Your total profit or loss across all trades, after subtracting fees.">ⓘ</span></span>
+                    <span class="stat-badge" id="netPlTradeCount">0</span>
+                </div>
+                <div class="stat-rich-main">
+                    <span class="stat-value" id="totalNetPL">$0.00</span>
+                </div>
+                <span class="stat-sub" id="totalFeesSub">$0.00 TOS fees</span>
+            </div>
+
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Trade win %</span>
+                    <span class="stat-info" data-tooltip="The percentage of your individual trades that finished in profit.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="winRateDisplay">0%</span>
+                    <div class="stat-gauge-col">
+                        <div class="stat-gauge stat-gauge--semi" id="tradeWinGauge" aria-hidden="true"></div>
+                        <div class="stat-gauge-legend stat-gauge-legend--triple">
+                            <span class="legend-win" id="tradeWinsCount">0</span>
+                            <span class="legend-even" id="tradeBeCount">0</span>
+                            <span class="legend-loss" id="tradeLossCount">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Profit factor</span>
+                    <span class="stat-info" data-tooltip="Total profit divided by total losses. Above 1 means you make more than you lose.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="profitFactorDisplay">0.00</span>
+                    <div class="stat-gauge stat-gauge--donut" id="profitFactorGauge" aria-hidden="true"></div>
+                </div>
+                <span class="stat-sub" id="profitFactorSub" hidden>No Data</span>
+            </div>
+
+            <div class="stat-card stat-card-rich stat-card-rich--avg">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Avg win/loss trade</span>
+                    <span class="stat-info" data-tooltip="Your average winning trade size compared to your average losing trade size.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="avgWinLossRatioDisplay">0.00</span>
+                    <div class="stat-gauge-col stat-gauge-col--avg">
+                        <div class="stat-avg-bar" id="avgWinLossBar" aria-hidden="true">
+                            <div class="stat-avg-bar-win" id="avgWinLossBarWin"></div>
+                            <div class="stat-avg-bar-loss" id="avgWinLossBarLoss"></div>
+                        </div>
+                        <div class="stat-avg-labels">
+                            <span class="legend-win" id="avgWinDisplay">$0</span>
+                            <span class="legend-loss" id="avgLossDisplay">-$0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="calendar-view" id="calendarCard" style="min-height: 560px; margin-top: 0;">
             <div class="calendar-header calendar-header--rich" style="padding: 1rem;">
                 <div class="cal-title-block">
                     <div id="monthlyPnlDisplay" class="cal-monthly-pl">+$0</div>
@@ -44,7 +108,7 @@
                     <span class="stat-info" data-tooltip="Your trading month at a glance: green days were profitable, red days were losses, and holidays are marked as closed. Use the arrows to change month. Click a day to open it.">ⓘ</span>
                 </div>
             </div>
-            <div class="calendar-grid" style="grid-template-columns: repeat(5, 1fr) 140px;">
+            <div class="calendar-grid calendar-grid--wide-weekly">
                 <div class="day-header">MON</div>
                 <div class="day-header">TUE</div>
                 <div class="day-header">WED</div>
@@ -56,7 +120,7 @@
         </section>
     </main>
 
-    <script src="../JS/trade_logic.js?v=sync2"></script>
+    <script src="../JS/trade_logic.js?v=sync16"></script>
     <!-- Custom Notification/Prompt Modal -->
     <div id="notificationModal" class="notification-modal">
         <div class="notification-content">

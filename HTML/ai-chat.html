@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat - TradeJournal</title>
+    <link rel="stylesheet" href="../CSS/trade.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="dashboard-body ai-chat-body">
+    <aside class="sidebar"></aside>
+
+    <main class="main-content ai-chat-page">
+        <div class="ai-chat-wrap">
+            <div class="ai-chat-hero" id="aiChatHero">
+                <h1 class="ai-chat-greeting" id="aiChatGreeting">Good afternoon</h1>
+
+                <div class="ai-chat-setup" id="aiChatSetup">
+                    <p class="ai-chat-setup-title">Optional: connect OpenAI for smarter answers</p>
+                    <p class="ai-chat-setup-sub">Works without a key using your journal data. Add a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a> for open-ended chat.</p>
+                    <div class="ai-chat-setup-row">
+                        <input type="password" id="aiChatKeyInput" class="ai-chat-setup-input" placeholder="sk-..." autocomplete="off">
+                        <button type="button" class="btn-primary ai-chat-setup-btn" onclick="saveOpenAIKeyFromChat()">Connect</button>
+                    </div>
+                </div>
+
+                <div class="ai-chat-composer-card" id="aiChatComposerCard">
+                    <div class="ai-chat-composer-header">
+                        <div class="ai-chat-avatar" aria-hidden="true">📈</div>
+                        <span class="ai-chat-brand">Trade AI</span>
+                    </div>
+                    <div class="ai-chat-composer-row">
+                        <textarea id="aiChatInput" class="ai-chat-input" rows="1" placeholder="Ask anything about your trades…"></textarea>
+                        <button type="button" class="ai-chat-send" id="aiChatSendBtn" title="Send message" aria-label="Send message">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="ai-chat-chips" id="aiChatChips">
+                    <button type="button" class="ai-chat-chip" data-prompt="Show my best setups based on my journal data">Show my best setups</button>
+                    <button type="button" class="ai-chat-chip" data-prompt="Review my most recent trading day">Review yesterday's trades</button>
+                    <button type="button" class="ai-chat-chip" data-prompt="What mistakes am I repeating in my trading?">What mistakes am I repeating?</button>
+                    <button type="button" class="ai-chat-chip" data-prompt="Build a game plan for my next session">Build my game plan</button>
+                    <button type="button" class="ai-chat-chip" data-prompt="Summarize my overall trading performance">Summarize my performance</button>
+                </div>
+            </div>
+
+            <div class="ai-chat-thread" id="aiChatThread" hidden></div>
+
+            <div class="ai-chat-composer-bar" id="aiChatComposerBar" hidden>
+                <div class="ai-chat-composer-card ai-chat-composer-card--bar">
+                    <div class="ai-chat-composer-row">
+                        <textarea id="aiChatInputBar" class="ai-chat-input" rows="1" placeholder="Ask anything about your journal…"></textarea>
+                        <button type="button" class="ai-chat-send" id="aiChatSendBarBtn" title="Send message" aria-label="Send message">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="../JS/trade_logic.js?v=sync7"></script>
+    <div id="notificationModal" class="notification-modal">
+        <div class="notification-content">
+            <div id="notificationIcon" class="notification-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            </div>
+            <h3 id="notificationTitle" class="notification-title">Notification</h3>
+            <p id="notificationMessage" class="notification-message">This is a message.</p>
+            <input type="text" id="notificationInput" class="notification-input" style="display: none;">
+            <div id="notificationButtons" class="notification-buttons">
+                <button id="notificationCancel" class="notification-btn secondary" style="display: none;">Cancel</button>
+                <button id="notificationConfirm" class="notification-btn primary">OK</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
