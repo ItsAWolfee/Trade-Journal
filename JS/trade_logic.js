@@ -293,16 +293,12 @@ function getTradeFees(trade) {
 
 function getNetProfit(trade) {
     const profit = parseFloat(trade.profit) || 0;
-    // User-entered P/L (e.g. from Thinkorswim) is the source of truth — don't recalc or subtract fees
-    if (trade.profitIsManual) return profit;
+    // Always subtract TOS fees so every trade's P/L is net and consistent.
     return profit - getTradeFees(trade);
 }
 
 function getProfitFeeNote(trade) {
     const fees = getTradeFees(trade);
-    if (trade.profitIsManual) {
-        return fees > 0 ? `${formatMoney(fees)} est. fees (not deducted)` : 'Manual P/L';
-    }
     return `-${formatMoney(fees)} fees`;
 }
 
@@ -392,6 +388,12 @@ function openModal() {
     profitManuallyEdited = false;
     formLoadingTrade = false;
     const tradeModal = document.getElementById('tradeModal');
+    if (!tradeModal) {
+        // Pages without the trade form send you to the dashboard's, which
+        // auto-opens via the #add-modal hash handler.
+        window.location.href = 'dashboard.html#add-modal';
+        return;
+    }
     if (tradeModal) {
         tradeModal.querySelector('h2').textContent = 'Log New Trade';
         tradeModal.querySelector('button[type="submit"]').textContent = 'Log Option Trade';
@@ -1483,6 +1485,178 @@ function getTickerIcon(symbol) {
     return "";
 }
 
+// ---- Shared sidebar: identical tabs on every page ----
+const SIDEBAR_NAV_ITEMS = [
+    { href: 'dashboard.html', label: 'Dashboard', icon: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline>' },
+    { href: 'calendar.html', label: 'Calendar', icon: '<rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/>' },
+    { href: 'day-view.html', label: 'Day View', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' },
+    { href: 'trade-view.html', label: 'Trade View', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path>' },
+    { href: 'reports.html', label: 'Reports', icon: '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path>' },
+    { href: 'trade-replay.html', label: 'Trade Replay', icon: '<circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/>' },
+    { href: 'progress-tracker.html', label: 'Progress Tracker', icon: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>' },
+    { href: 'resources.html', label: 'Resources', icon: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>' }
+];
+
+function renderSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+    const current = (window.location.pathname.split('/').pop() || 'dashboard.html').toLowerCase();
+    const svg = (inner) => `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+    const navHtml = SIDEBAR_NAV_ITEMS.map(it => {
+        const active = current === it.href.toLowerCase() ? ' active' : '';
+        return `<a href="${it.href}" class="nav-item${active}">${svg(it.icon)}<span>${it.label}</span></a>`;
+    }).join('');
+
+    sidebar.innerHTML = `
+        <div class="logo">
+            <span style="color: var(--accent-primary); font-weight: 900; letter-spacing: 1px;">TRADEJOURNAL</span>
+        </div>
+        <button class="btn-primary" style="margin-bottom: 2rem; width: 100%;" onclick="openModal()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="margin-right: 8px;">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            Add Trade
+        </button>
+        <nav class="nav-links">${navHtml}</nav>
+        <div class="data-backup-panel">
+            <div class="data-backup-header">Move to another PC</div>
+            <button type="button" class="data-backup-btn" onclick="exportJournalData()">Export Data</button>
+            <button type="button" class="data-backup-btn" onclick="importJournalData()">Import Data</button>
+            <input type="file" id="journalImportInput" accept=".json,application/json" style="display:none;" onchange="handleJournalImport(event)">
+            <p class="data-backup-hint">Export before switching laptops, then import on the new one.</p>
+        </div>
+        <div style="margin-top: auto;">
+            <a href="#" class="nav-item" onclick="openSettings(); return false;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z" />
+                    <circle cx="12" cy="12" r="3" />
+                </svg>
+                <span>Settings</span>
+            </a>
+        </div>
+    `;
+}
+
+// ---- Theme (dark / light) ----
+function applySavedTheme() {
+    const theme = localStorage.getItem('tradeJournalTheme') || 'dark';
+    if (theme === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+        document.documentElement.removeAttribute('data-theme');
+    }
+}
+
+function setTheme(theme) {
+    localStorage.setItem('tradeJournalTheme', theme);
+    applySavedTheme();
+}
+
+// Apply immediately so there's no flash of the wrong theme.
+applySavedTheme();
+
+// ---- Settings modal (built on demand, works on every page) ----
+function openSettings() {
+    let modal = document.getElementById('settingsModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'settingsModal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 460px;">
+                <h2 style="margin-bottom: 0.25rem;">Settings</h2>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">Personalize your journal.</p>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row-title">Light mode</div>
+                        <div class="settings-row-sub">Switch between the dark and light theme.</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="settingsThemeToggle" onchange="setTheme(this.checked ? 'light' : 'dark')">
+                        <span class="switch-slider"></span>
+                    </label>
+                </div>
+                <div class="settings-row">
+                    <div>
+                        <div class="settings-row-title">Backup your data</div>
+                        <div class="settings-row-sub">Save or restore all trades, watchlist and notes.</div>
+                    </div>
+                    <div style="display:flex; gap:0.5rem;">
+                        <button type="button" class="data-backup-btn" style="width:auto;" onclick="exportJournalData()">Export</button>
+                        <button type="button" class="data-backup-btn" style="width:auto;" onclick="importJournalData()">Import</button>
+                    </div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; margin-top:1.5rem;">
+                    <button type="button" class="btn-primary" onclick="closeSettings()">Done</button>
+                </div>
+            </div>
+        `;
+        modal.addEventListener('click', (e) => { if (e.target === modal) closeSettings(); });
+        document.body.appendChild(modal);
+    }
+    const toggle = modal.querySelector('#settingsThemeToggle');
+    if (toggle) toggle.checked = (localStorage.getItem('tradeJournalTheme') || 'dark') === 'light';
+    modal.style.display = 'flex';
+}
+
+function closeSettings() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) modal.style.display = 'none';
+}
+
+// ---- Whole-page screenshot (camera on every page) ----
+function loadHtml2canvas() {
+    return new Promise((resolve, reject) => {
+        if (typeof html2canvas === 'function') return resolve();
+        let s = document.getElementById('html2canvasScript');
+        if (s) {
+            s.addEventListener('load', () => resolve());
+            s.addEventListener('error', reject);
+            return;
+        }
+        s = document.createElement('script');
+        s.id = 'html2canvasScript';
+        s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+        s.onload = () => resolve();
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
+}
+
+function screenshotPage() {
+    const target = document.querySelector('.main-content') || document.body;
+    const btn = document.getElementById('pageScreenshotBtn');
+    if (btn) btn.disabled = true;
+    loadHtml2canvas()
+        .then(() => {
+            const bgColor = getComputedStyle(document.body).backgroundColor || '#0b0b0d';
+            return html2canvas(target, { backgroundColor: bgColor, scale: 2, useCORS: true });
+        })
+        .then(canvas => {
+            const link = document.createElement('a');
+            const page = (window.location.pathname.split('/').pop() || 'page').replace('.html', '') || 'page';
+            link.download = `${page}-${new Date().toISOString().slice(0, 10)}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        })
+        .catch(() => showNotification({ title: 'Screenshot failed', message: 'Could not capture the page. Check your connection and try again.' }))
+        .finally(() => { if (btn) btn.disabled = false; });
+}
+
+function injectScreenshotButton() {
+    if (document.getElementById('pageScreenshotBtn')) return;
+    if (!document.querySelector('.main-content')) return;
+    const btn = document.createElement('button');
+    btn.id = 'pageScreenshotBtn';
+    btn.className = 'page-shot-fab';
+    btn.title = 'Screenshot this page';
+    btn.setAttribute('data-html2canvas-ignore', 'true');
+    btn.onclick = screenshotPage;
+    btn.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`;
+    document.body.appendChild(btn);
+}
+
 // --- NEW CUSTOM MODAL LOGIC (Replaces native alert/confirm/prompt) ---
 let modalResolve = null;
 
@@ -1950,14 +2124,14 @@ window.deleteAllTrades = async function deleteAllTrades() {
     );
     if (!confirmed) return;
     trades = [];
-    tradeViewSymbolFilter = '';
+    tradeViewSymbols = [];
     tradeViewDateStart = '';
     tradeViewDateEnd = '';
+    tradeViewResultFilter = 'all';
+    tradeViewTypeFilter = 'all';
     saveTrades();
     refreshAllViews();
     populateSymbolFilter();
-    const select = document.getElementById('symbolFilterSelect');
-    if (select) select.value = '';
     showAlert('All trades have been removed.', 'Deleted!');
 };
 
@@ -2093,14 +2267,19 @@ function closeDailyChecklist() {
     updateTodayScore();
 }
 
-function heatmapActivityColor(tradeCount) {
+// Cell color based on that day's net P/L, scaled to your biggest win/loss days.
+// Green = profit, red = loss, white = break-even, faint = no trades / non-trading day.
+function heatmapActivityColor(dayProfit, tradeCount, extremes) {
     if (tradeCount === 0) return 'rgba(255,255,255,0.05)';
-    if (tradeCount === 1) return 'rgba(123, 97, 255, 0.25)';
-    if (tradeCount === 2) return 'rgba(123, 97, 255, 0.45)';
-    if (tradeCount <= 4) return 'rgba(123, 97, 255, 0.7)';
-    return 'rgba(123, 97, 255, 1)';
+    const intensity = Math.max(profitIntensity(dayProfit, extremes), 0.15);
+    const op = 0.2 + intensity * 0.8;
+    if (dayProfit > 0) return `rgba(0, 240, 168, ${op})`;
+    if (dayProfit < 0) return `rgba(255, 77, 109, ${op})`;
+    return 'rgba(255, 255, 255, 0.4)';
 }
 
+// Build GitHub-style columns, but only trading days (Mon–Fri). Each column is
+// one week with 5 cells; weekends are skipped entirely.
 function buildHeatmapWeeks(monthsBack) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -2116,18 +2295,21 @@ function buildHeatmapWeeks(monthsBack) {
         start.setDate(1);
     }
     const cursor = new Date(start);
-    while (cursor.getDay() !== 0) cursor.setDate(cursor.getDate() - 1);
+    // Snap back to Monday (0=Sun, 1=Mon).
+    while (cursor.getDay() !== 1) cursor.setDate(cursor.getDate() - 1);
 
     const weeks = [];
     while (true) {
         const week = [];
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 5; i++) {
             week.push({
                 date: fmtDate(cursor),
                 isFuture: cursor > today
             });
             cursor.setDate(cursor.getDate() + 1);
         }
+        // Skip Saturday & Sunday to land on next Monday.
+        cursor.setDate(cursor.getDate() + 2);
         weeks.push(week);
         if (cursor > today) break;
     }
@@ -2164,6 +2346,7 @@ function renderActivityHeatmap(grid, monthsBack) {
     const weeks = buildHeatmapWeeks(monthsBack);
     renderHeatmapMonthLabels(weeks, document.getElementById('progressHeatmapMonths'));
 
+    const extremes = getDailyProfitExtremes();
     grid.innerHTML = '';
     weeks.forEach(week => {
         const weekCol = document.createElement('div');
@@ -2180,10 +2363,15 @@ function renderActivityHeatmap(grid, monthsBack) {
             const dayTrades = trades.filter(t => t.date === day.date);
             const tradeCount = dayTrades.length;
             const dayProfit = sumNetProfit(dayTrades);
-            cell.style.background = heatmapActivityColor(tradeCount);
-            cell.title = tradeCount > 0
-                ? `${day.date}: ${tradeCount} trade${tradeCount > 1 ? 's' : ''}, ${formatProfit(dayProfit)}`
-                : `${day.date}: no trades`;
+            const holiday = getHolidayName(day.date, new Date(day.date + 'T00:00:00').getFullYear());
+            cell.style.background = heatmapActivityColor(dayProfit, tradeCount, extremes);
+            if (tradeCount > 0) {
+                cell.title = `${day.date}: ${tradeCount} trade${tradeCount > 1 ? 's' : ''}, ${formatProfit(dayProfit)}`;
+            } else if (holiday) {
+                cell.title = `${day.date}: ${holiday} (market closed)`;
+            } else {
+                cell.title = `${day.date}: no trades`;
+            }
             weekCol.appendChild(cell);
         });
         grid.appendChild(weekCol);
@@ -2308,9 +2496,11 @@ const DEFAULT_WATCHLIST = [
     'AMZN', 'QQQ', 'SHOP', 'IWM', 'AAPL', 'HOOD', 'COIN', 'AMD', 'MU', 'TSLA'
 ];
 
-let tradeViewSymbolFilter = '';
+let tradeViewSymbols = [];
 let tradeViewDateStart = '';
 let tradeViewDateEnd = '';
+let tradeViewResultFilter = 'all';
+let tradeViewTypeFilter = 'all';
 
 function getWatchlist() {
     const stored = localStorage.getItem('tradeJournalWatchlist');
@@ -2344,6 +2534,10 @@ function getFilterSymbolChoices() {
 }
 
 function populateSymbolFilter() {
+    if (document.getElementById('symbolFilterList')) {
+        renderSymbolFilterList();
+        return;
+    }
     const select = document.getElementById('symbolFilterSelect');
     if (!select) return;
     const current = select.value;
@@ -2353,25 +2547,146 @@ function populateSymbolFilter() {
     if (current && choices.includes(current)) select.value = current;
 }
 
+function renderSymbolFilterList() {
+    const list = document.getElementById('symbolFilterList');
+    if (!list) return;
+    const search = (document.getElementById('symbolFilterSearch')?.value || '').trim().toUpperCase();
+    const choices = getFilterSymbolChoices().filter(s => !search || s.includes(search));
+    if (choices.length === 0) {
+        list.innerHTML = '<div class="filter-symbol-empty">No tickers found</div>';
+        return;
+    }
+    list.innerHTML = choices.map(s => {
+        const checked = tradeViewSymbols.includes(s) ? 'checked' : '';
+        return `<label class="filter-symbol-item"><input type="checkbox" value="${s}" ${checked} onchange="applyTradeFilters()"><span>${s}</span></label>`;
+    }).join('');
+}
+
+function getSelectedSymbols() {
+    return Array.from(document.querySelectorAll('#symbolFilterList input[type="checkbox"]:checked')).map(c => c.value);
+}
+
 function getFilteredTrades() {
     let filtered = [...trades];
-    if (tradeViewSymbolFilter) {
-        filtered = filtered.filter(t =>
-            extractBaseTicker(t.symbol) === tradeViewSymbolFilter ||
-            t.symbol.toUpperCase().includes(tradeViewSymbolFilter)
-        );
+    if (tradeViewSymbols.length) {
+        const set = new Set(tradeViewSymbols);
+        filtered = filtered.filter(t => set.has(extractBaseTicker(t.symbol)));
     }
     if (tradeViewDateStart && tradeViewDateEnd) {
         filtered = filtered.filter(t => t.date >= tradeViewDateStart && t.date <= tradeViewDateEnd);
+    } else if (tradeViewDateStart) {
+        filtered = filtered.filter(t => t.date >= tradeViewDateStart);
+    } else if (tradeViewDateEnd) {
+        filtered = filtered.filter(t => t.date <= tradeViewDateEnd);
+    }
+    if (tradeViewResultFilter === 'win') {
+        filtered = filtered.filter(t => getNetProfit(t) >= 0);
+    } else if (tradeViewResultFilter === 'loss') {
+        filtered = filtered.filter(t => getNetProfit(t) < 0);
+    }
+    if (tradeViewTypeFilter !== 'all') {
+        filtered = filtered.filter(t => {
+            const type = t.type || (getNetProfit(t) >= 0 ? 'Call' : 'Put');
+            return type === tradeViewTypeFilter;
+        });
     }
     return filtered;
 }
 
-window.applySymbolFilter = function applySymbolFilter() {
-    const select = document.getElementById('symbolFilterSelect');
-    tradeViewSymbolFilter = select ? select.value : '';
+// Open the native date calendar only when the box itself is clicked.
+function openDatePicker(input) {
+    if (input && typeof input.showPicker === 'function') {
+        try { input.showPicker(); } catch (e) { /* ignore */ }
+    }
+}
+
+// ---- Trade View filter popover (all filters optional, applied live) ----
+function toggleFilterPanel(forceClose) {
+    const panel = document.getElementById('filterPanel');
+    const btn = document.getElementById('filterToggleBtn');
+    if (!panel) return;
+    const willOpen = forceClose === true ? false : panel.hidden;
+    panel.hidden = !willOpen;
+    if (btn) btn.classList.toggle('active', willOpen);
+}
+
+function countActiveFilters() {
+    let n = 0;
+    if (tradeViewSymbols.length) n++;
+    if (tradeViewResultFilter !== 'all') n++;
+    if (tradeViewTypeFilter !== 'all') n++;
+    if (tradeViewDateStart || tradeViewDateEnd) n++;
+    return n;
+}
+
+function updateFilterBadge() {
+    const badge = document.getElementById('filterCountBadge');
+    if (!badge) return;
+    const n = countActiveFilters();
+    badge.textContent = n;
+    badge.style.display = n > 0 ? 'inline-flex' : 'none';
+}
+
+// Read whatever the user has chosen and refresh the table. Nothing is required.
+function applyTradeFilters() {
+    const startInput = document.getElementById('filterDateStart');
+    const endInput = document.getElementById('filterDateEnd');
+    const resultActive = document.querySelector('#filterResultGroup button.active');
+    const typeActive = document.querySelector('#filterTypeGroup button.active');
+
+    tradeViewSymbols = getSelectedSymbols();
+    tradeViewDateStart = startInput ? startInput.value : '';
+    tradeViewDateEnd = endInput ? endInput.value : '';
+    tradeViewResultFilter = resultActive ? resultActive.dataset.result : 'all';
+    tradeViewTypeFilter = typeActive ? typeActive.dataset.type : 'all';
+
     populateTradeLog(getFilteredTrades());
-};
+    updateFilterBadge();
+}
+
+function resetTradeFilters() {
+    tradeViewSymbols = [];
+    tradeViewDateStart = '';
+    tradeViewDateEnd = '';
+    tradeViewResultFilter = 'all';
+    tradeViewTypeFilter = 'all';
+
+    const search = document.getElementById('symbolFilterSearch');
+    if (search) search.value = '';
+    const startInput = document.getElementById('filterDateStart');
+    if (startInput) startInput.value = '';
+    const endInput = document.getElementById('filterDateEnd');
+    if (endInput) endInput.value = '';
+    document.querySelectorAll('#filterResultGroup button').forEach(b => b.classList.toggle('active', b.dataset.result === 'all'));
+    document.querySelectorAll('#filterTypeGroup button').forEach(b => b.classList.toggle('active', b.dataset.type === 'all'));
+    renderSymbolFilterList();
+
+    populateTradeLog(getFilteredTrades());
+    updateFilterBadge();
+}
+
+function initTradeFilterUI() {
+    const panel = document.getElementById('filterPanel');
+    if (!panel) return;
+
+    // Segmented toggles (Result / Type) apply instantly
+    document.querySelectorAll('.segmented').forEach(group => {
+        group.addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            group.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            applyTradeFilters();
+        });
+    });
+
+    // Close the popover when clicking outside of it
+    document.addEventListener('click', (e) => {
+        if (panel.hidden) return;
+        if (e.target.closest('#filterPanel') || e.target.closest('#filterToggleBtn')) return;
+        toggleFilterPanel(true);
+    });
+}
 
 function renderWatchlistPanel() {
     const container = document.getElementById('watchlistItems');
@@ -2449,6 +2764,11 @@ function initInfoTooltips() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    renderSidebar();
+    applySavedTheme();
+    injectScreenshotButton();
+    initTradeFilterUI();
+
     await syncJournalFromRepo();
 
     initInfoTooltips();
@@ -2784,7 +3104,7 @@ function initDayView() {
                         </div>
                         <div class="trade-metric-pill">
                             <span class="label">TOS Fees</span>
-                            <span class="value" style="color:var(--text-muted);">${t.profitIsManual ? `${formatMoney(tradeFees)} est.` : `-${formatMoney(tradeFees)}`}</span>
+                            <span class="value" style="color:var(--text-muted);">-${formatMoney(tradeFees)}</span>
                         </div>
                         ${t.contracts ? `
                         <div class="trade-metric-pill">

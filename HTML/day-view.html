@@ -99,6 +99,67 @@
             </div>
         </header>
 
+        <!-- Overall Stats Row -->
+        <section class="stats-grid stats-grid--rich">
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Net P/L <span class="stat-info" data-tooltip="Your total profit or loss across all trades, after subtracting fees.">ⓘ</span></span>
+                    <span class="stat-badge" id="netPlTradeCount">0</span>
+                </div>
+                <div class="stat-rich-main">
+                    <span class="stat-value" id="totalNetPL">$0.00</span>
+                </div>
+                <span class="stat-sub" id="totalFeesSub">$0.00 TOS fees</span>
+            </div>
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Trade win %</span>
+                    <span class="stat-info" data-tooltip="The percentage of your individual trades that finished in profit.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="winRateDisplay">0%</span>
+                    <div class="stat-gauge-col">
+                        <div class="stat-gauge stat-gauge--semi" id="tradeWinGauge" aria-hidden="true"></div>
+                        <div class="stat-gauge-legend stat-gauge-legend--triple">
+                            <span class="legend-win" id="tradeWinsCount">0</span>
+                            <span class="legend-even" id="tradeBeCount">0</span>
+                            <span class="legend-loss" id="tradeLossCount">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Profit factor</span>
+                    <span class="stat-info" data-tooltip="Total profit divided by total losses. Above 1 means you make more than you lose.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="profitFactorDisplay">0.00</span>
+                    <div class="stat-gauge stat-gauge--donut" id="profitFactorGauge" aria-hidden="true"></div>
+                </div>
+                <span class="stat-sub" id="profitFactorSub">No Data</span>
+            </div>
+            <div class="stat-card stat-card-rich">
+                <div class="stat-rich-top">
+                    <span class="stat-label">Avg win/loss trade</span>
+                    <span class="stat-info" data-tooltip="Your average winning trade size compared to your average losing trade size.">ⓘ</span>
+                </div>
+                <div class="stat-rich-main stat-rich-main--chart">
+                    <span class="stat-value" id="avgWinLossRatioDisplay">0.00</span>
+                    <div class="stat-gauge-col">
+                        <div class="stat-avg-bar" id="avgWinLossBar" aria-hidden="true">
+                            <div class="stat-avg-bar-win" id="avgWinLossBarWin"></div>
+                            <div class="stat-avg-bar-loss" id="avgWinLossBarLoss"></div>
+                        </div>
+                        <div class="stat-avg-labels">
+                            <span class="legend-win" id="avgWinDisplay">$0</span>
+                            <span class="legend-loss" id="avgLossDisplay">-$0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Stats Row: Symbol, Result, Day P/L, Trade Cost -->
         <section class="day-stats-grid">
             <div class="stat-card">
@@ -120,9 +181,6 @@
             </div>
         </section>
 
-        <!-- Trade Analysis: Image + Notes (populated by JS) -->
-        <div id="dayTradeDetails" class="day-trade-details"></div>
-
         <!-- Trade Table -->
         <section class="chart-container chart-container--auto day-trade-table-wrap">
             <table class="trade-log-table">
@@ -142,6 +200,9 @@
                 </tbody>
             </table>
         </section>
+
+        <!-- Trade Analysis: Image + Notes (populated by JS) -->
+        <div id="dayTradeDetails" class="day-trade-details"></div>
     </main>
 
     <script src="../JS/trade_logic.js"></script>
