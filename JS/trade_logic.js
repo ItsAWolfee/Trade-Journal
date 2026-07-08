@@ -91,6 +91,132 @@ window.exportJournalData = function exportJournalData() {
 // Location of the committed data file, relative to the HTML pages in /HTML/.
 const REMOTE_DATA_URL = '../data/journal-data.json';
 const SYNC_MARKER_KEY = 'tradeJournalSyncedAt';
+const GITHUB_TOKEN_KEY = 'tradeJournalGithubToken';
+const GITHUB_SYNC = {
+    owner: 'itsawolfee',
+    repo: 'Trade-Journal',
+    branch: 'main',
+    path: 'data/journal-data.json'
+};
+
+function getGithubToken() {
+    return localStorage.getItem(GITHUB_TOKEN_KEY) || '';
+}
+
+function setGithubToken(token) {
+    if (token) localStorage.setItem(GITHUB_TOKEN_KEY, token.trim());
+    else localStorage.removeItem(GITHUB_TOKEN_KEY);
+}
+
+window.saveGithubTokenFromSettings = function saveGithubTokenFromSettings() {
+    const input = document.getElementById('settingsGithubToken');
+    const token = input ? input.value.trim() : '';
+    if (!token || token.startsWith('••••')) {
+        showAlert('Paste your GitHub token first.', 'Token Needed');
+        return;
+    }
+    setGithubToken(token);
+    if (input) input.value = '';
+    showAlert('Token saved on this device. You can now use Sync to Phone.', 'Saved');
+};
+
+function isGithubPagesSite() {
+    return location.protocol === 'https:' && location.hostname.includes('github.io');
+}
+
+async function githubApi(path, options = {}) {
+    const token = getGithubToken();
+    if (!token) throw new Error('NO_TOKEN');
+    const res = await fetch(`https://api.github.com${path}`, {
+        ...options,
+        headers: {
+            Accept: 'application/vnd.github+json',
+            Authorization: `Bearer ${token}`,
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(options.headers || {})
+        }
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `GitHub API error (${res.status})`);
+    }
+    return res.json();
+}
+
+function applyRemoteJournalPayload(payload, stamp, render = true) {
+    if (!payload || !Array.isArray(payload.trades)) return false;
+    trades = payload.trades.map(t => {
+        if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
+        return t;
+    });
+    localStorage.setItem('tradeJournalData', JSON.stringify(trades));
+    if (payload.watchlist) localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
+    if (typeof payload.tradingNotes === 'string') localStorage.setItem('tradingNotes', payload.tradingNotes);
+    if (stamp) localStorage.setItem(SYNC_MARKER_KEY, stamp);
+    if (render) {
+        syncStocklistDatalists();
+        renderWatchlistPanel();
+        populateSymbolFilter();
+        refreshAllViews();
+    }
+    return true;
+}
+
+// Push current browser data to GitHub — one click, no manual export.
+window.pushJournalToGithub = async function pushJournalToGithub() {
+    if (!getGithubToken()) {
+        showAlert('Open Settings and add your GitHub token first (one-time setup).', 'GitHub Token Needed');
+        openSettings();
+        return;
+    }
+    try {
+        const payload = getJournalBackupPayload();
+        const content = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+        const filePath = `/repos/${GITHUB_SYNC.owner}/${GITHUB_SYNC.repo}/contents/${GITHUB_SYNC.path}`;
+        let sha;
+        try {
+            const existing = await githubApi(`${filePath}?ref=${GITHUB_SYNC.branch}`);
+            sha = existing.sha;
+        } catch (e) {
+            if (!String(e.message).includes('404')) throw e;
+        }
+        await githubApi(filePath, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: `Sync journal data (${payload.exportedAt})`,
+                content,
+                branch: GITHUB_SYNC.branch,
+                ...(sha ? { sha } : {})
+            })
+        });
+        localStorage.setItem(SYNC_MARKER_KEY, payload.exportedAt);
+        showAlert('Data is on GitHub. Open the site on your phone and tap Pull Latest (or refresh).', 'Synced!');
+    } catch (err) {
+        if (err.message === 'NO_TOKEN') {
+            showAlert('Add your GitHub token in Settings first.', 'Token Needed');
+            openSettings();
+        } else {
+            showAlert(err.message || 'Could not push to GitHub.', 'Sync Failed');
+        }
+    }
+};
+
+// Pull the latest data from GitHub into this browser.
+window.pullJournalFromGithub = async function pullJournalFromGithub() {
+    try {
+        const res = await fetch(REMOTE_DATA_URL, { cache: 'no-store' });
+        if (!res.ok) throw new Error('No sync file found on GitHub yet. Push from your PC first.');
+        const payload = await res.json();
+        const stamp = payload.exportedAt || '';
+        if (!stamp) throw new Error('Sync file is missing a timestamp.');
+        if (applyRemoteJournalPayload(payload, stamp)) {
+            showAlert('Latest trades loaded from GitHub.', 'Updated!');
+        }
+    } catch (err) {
+        showAlert(err.message || 'Could not pull data.', 'Pull Failed');
+    }
+};
 
 // Downloads a file named exactly `journal-data.json`. Drop it into the repo's
 // `data/` folder (replacing the old one), then commit & push. On the next load,
@@ -113,8 +239,6 @@ window.exportSyncFile = function exportSyncFile() {
 };
 
 // Loads the committed data file and, when appropriate, applies it to this device.
-// Updates localStorage + the in-memory `trades` array WITHOUT rendering, because
-// the normal startup render runs right after this resolves.
 async function syncJournalFromRepo() {
     try {
         const res = await fetch(REMOTE_DATA_URL, { cache: 'no-store' });
@@ -129,28 +253,11 @@ async function syncJournalFromRepo() {
         const hasLocalTrades = (JSON.parse(localStorage.getItem('tradeJournalData') || '[]')).length > 0;
         const appliedStamp = localStorage.getItem(SYNC_MARKER_KEY) || '';
 
-        // Seed a fresh device (e.g. your phone) from the repo, and pull newer
-        // pushes on devices that have already synced. Never clobber unsynced
-        // local edits (e.g. your PC's working data).
         const shouldApply = !hasLocalTrades || (appliedStamp && remoteStamp > appliedStamp);
         if (!shouldApply) return;
 
-        trades = payload.trades.map(t => {
-            if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
-            return t;
-        });
-        localStorage.setItem('tradeJournalData', JSON.stringify(trades));
-
-        if (payload.watchlist) {
-            localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
-        }
-        if (typeof payload.tradingNotes === 'string') {
-            localStorage.setItem('tradingNotes', payload.tradingNotes);
-        }
-
-        localStorage.setItem(SYNC_MARKER_KEY, remoteStamp);
+        applyRemoteJournalPayload(payload, remoteStamp, false);
     } catch (err) {
-        // Offline, running from file://, or no data file yet — just use local data.
         console.debug('Journal sync skipped:', err);
     }
 }
@@ -1520,11 +1627,11 @@ function renderSidebar() {
         </button>
         <nav class="nav-links">${navHtml}</nav>
         <div class="data-backup-panel">
-            <div class="data-backup-header">Move to another PC</div>
-            <button type="button" class="data-backup-btn" onclick="exportJournalData()">Export Data</button>
-            <button type="button" class="data-backup-btn" onclick="importJournalData()">Import Data</button>
+            <div class="data-backup-header">Phone sync</div>
+            <button type="button" class="data-backup-btn data-backup-btn--primary" onclick="pushJournalToGithub()">Sync to Phone</button>
+            <button type="button" class="data-backup-btn" onclick="pullJournalFromGithub()">Pull Latest</button>
             <input type="file" id="journalImportInput" accept=".json,application/json" style="display:none;" onchange="handleJournalImport(event)">
-            <p class="data-backup-hint">Export before switching laptops, then import on the new one.</p>
+            <p class="data-backup-hint">PC: tap Sync to Phone after adding trades. Phone: tap Pull Latest (or refresh).</p>
         </div>
         <div style="margin-top: auto;">
             <a href="#" class="nav-item" onclick="openSettings(); return false;">
@@ -1567,6 +1674,14 @@ function openSettings() {
             <div class="modal-content" style="max-width: 460px;">
                 <h2 style="margin-bottom: 0.25rem;">Settings</h2>
                 <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">Personalize your journal.</p>
+                <div class="settings-row settings-row--stack">
+                    <div>
+                        <div class="settings-row-title">GitHub sync token</div>
+                        <div class="settings-row-sub">One-time setup on your PC. Create a token at github.com/settings/tokens with <strong>repo</strong> access.</div>
+                    </div>
+                    <input type="password" id="settingsGithubToken" class="settings-token-input" placeholder="ghp_..." autocomplete="off">
+                    <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveGithubTokenFromSettings()">Save token</button>
+                </div>
                 <div class="settings-row">
                     <div>
                         <div class="settings-row-title">Light mode</div>
@@ -1597,6 +1712,11 @@ function openSettings() {
     }
     const toggle = modal.querySelector('#settingsThemeToggle');
     if (toggle) toggle.checked = (localStorage.getItem('tradeJournalTheme') || 'dark') === 'light';
+    const tokenInput = modal.querySelector('#settingsGithubToken');
+    if (tokenInput) {
+        tokenInput.value = '';
+        tokenInput.placeholder = getGithubToken() ? 'Token saved — paste new one to replace' : 'ghp_...';
+    }
     modal.style.display = 'flex';
 }
 

@@ -12,7 +12,7 @@
     "appId": "com.tradejournal.app",
     "productName": "Trade Journal",
     "directories": {
-      "output": "release"
+      "output": "build-output"
     },
     "files": [
       "main.js",
