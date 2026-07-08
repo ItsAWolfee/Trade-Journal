@@ -82,6 +82,8 @@ body {
     padding: 2rem 1.5rem;
     position: fixed;
     height: 100vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 

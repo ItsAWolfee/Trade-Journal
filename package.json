@@ -1,6 +1,6 @@
 {
   "name": "trade-journal",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Trade Journal desktop app",
   "main": "main.js",
   "scripts": {
@@ -12,14 +12,17 @@
     "appId": "com.tradejournal.app",
     "productName": "Trade Journal",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
       "main.js",
+      "index.html",
       "HTML/**/*",
       "CSS/**/*",
       "JS/**/*",
-      "Images/**/*"
+      "Images/**/*",
+      "Font/**/*",
+      "data/**/*"
     ],
     "win": {
       "target": [
