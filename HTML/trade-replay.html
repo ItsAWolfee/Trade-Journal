@@ -102,10 +102,52 @@
                     </div>
                 </div>
 
-                <div class="replay-chart-wrap">
-                    <div id="replayChart" class="replay-chart"></div>
-                    <div id="replaySessionOverlay" class="replay-session-overlay" aria-hidden="true"></div>
-                    <div id="replayChartStatus" class="replay-chart-status" hidden></div>
+                <div class="replay-chart-area">
+                    <nav class="replay-draw-rail" id="replayDrawRail" aria-label="Drawing tools">
+                        <button type="button" class="replay-draw-btn replay-draw-btn--active" data-draw-tool="crosshair" title="Crosshair">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M2 12h20" stroke-dasharray="3 3"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" data-draw-tool="trendline" title="Trend line">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="5" cy="19" r="2"/><circle cx="19" cy="5" r="2"/><path d="M7 17L17 7"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" data-draw-tool="hline" title="Horizontal line">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12h16"/><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" data-draw-tool="levels" title="Move PM/PD levels">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h16M4 16h16"/><path d="M8 6v4M16 14v4"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" data-draw-tool="measure" title="Measure">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17 17 3"/><path d="m14 6 4 4"/></svg>
+                        </button>
+                        <div class="replay-draw-divider"></div>
+                        <button type="button" class="replay-draw-btn" id="replayZoomInBtn" title="Zoom in">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4M11 8v6M8 11h6"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" id="replayZoomOutBtn" title="Zoom out">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4M8 11h6"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" id="replayFitBtn" title="Fit chart">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>
+                        </button>
+                        <div class="replay-draw-divider"></div>
+                        <button type="button" class="replay-draw-btn" id="replayLockLevelsBtn" title="Lock PM/PD levels">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" id="replayHideLevelsBtn" title="Hide/show levels">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" id="replayClearDrawBtn" title="Remove drawings">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                        </button>
+                    </nav>
+                    <div class="replay-chart-wrap">
+                        <div id="replayChart" class="replay-chart"></div>
+                        <div id="replaySessionOverlay" class="replay-session-overlay" aria-hidden="true"></div>
+                        <div id="replayExecOverlay" class="replay-exec-overlay" aria-hidden="true"></div>
+                        <div id="replayLevelHandles" class="replay-level-handles" aria-hidden="true"></div>
+                        <div id="replayMeasureLabel" class="replay-measure-label" hidden></div>
+                        <div id="replayChartStatus" class="replay-chart-status" hidden></div>
+                    </div>
                 </div>
 
                 <div class="replay-controls">
@@ -139,7 +181,7 @@
         </div>
     </main>
 
-    <script src="../JS/trade_logic.js?v=sync17"></script>
+    <script src="../JS/trade_logic.js?v=sync24"></script>
     <div id="notificationModal" class="notification-modal">
         <div class="notification-content">
             <div id="notificationIcon" class="notification-icon">
