@@ -3689,7 +3689,13 @@ const replayState = {
     levelsLocked: false,
     levelsHidden: false,
     drawTool: 'crosshair',
+    drawStyle: { color: '#e91e63', width: 2, opacity: 100 },
+    drawHistory: [],
+    drawRedoStack: [],
+    brushPaths: [],
     userDrawings: [],
+    userAdjustedPrice: false,
+    trendPending: null,
     measurePending: null,
     draggingLevel: null,
     preCandles: [],
@@ -3704,7 +3710,7 @@ const replayState = {
     playing: false,
     timer: null,
     speed: 1,
-    intervalMin: 1,
+    intervalMin: 5,
     selectedTradeId: null,
     selectedTrade: null,
     selectedDate: '',
@@ -3712,7 +3718,11 @@ const replayState = {
     loading: false,
     needsFit: true,
     priceRangeLocked: false,
-    resizeObs: null
+    lockedPriceRange: null,
+    overlayResizeBound: false,
+    overlayResizeObs: null,
+    resizeObs: null,
+    suppressChartEvents: false
 };
 
 const REPLAY_LEVEL_DEFS = [
@@ -3721,6 +3731,30 @@ const REPLAY_LEVEL_DEFS = [
     { key: 'priorHigh', color: '#2962ff', title: 'PD High' },
     { key: 'priorLow', color: '#2962ff', title: 'PD Low' }
 ];
+
+const REPLAY_DRAW_PALETTE = [
+    '#ffffff', '#bdbdbd', '#616161', '#212121',
+    '#ef5350', '#ff9800', '#ffee58', '#66bb6a',
+    '#26c6da', '#42a5f5', '#5c6bc0', '#ab47bc',
+    '#ec407a', '#8d6e63', '#e91e63', '#f44336'
+];
+
+function hexToRgba(hex, alpha) {
+    const h = (hex || '#e91e63').replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16) || 233;
+    const g = parseInt(h.slice(2, 4), 16) || 30;
+    const b = parseInt(h.slice(4, 6), 16) || 99;
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function getReplayStrokeColor(opacityPct) {
+    const pct = opacityPct ?? replayState.drawStyle?.opacity ?? 100;
+    return hexToRgba(replayState.drawStyle?.color || '#e91e63', pct / 100);
+}
+
+function getReplayLineWidth() {
+    return replayState.drawStyle?.width || 2;
+}
 
 function formatTime12h(timeStr) {
     if (!timeStr) return '--';
@@ -3879,12 +3913,11 @@ function calcEMA(candles, period = 8) {
     });
 }
 
-function calcVwap(candles, sessionStartTime) {
+function calcVwap(candles) {
     let cumVol = 0;
     let cumTpVol = 0;
     const out = [];
-    candles.forEach(c => {
-        if (c.time < sessionStartTime) return;
+    (candles || []).forEach(c => {
         const vol = c.volume > 0 ? c.volume : 1;
         const tp = (c.high + c.low + c.close) / 3;
         cumVol += vol;
@@ -3965,24 +3998,19 @@ function updateReplayLevelHandles() {
         if (container) container.innerHTML = '';
         return;
     }
-    const canDrag = replayState.drawTool === 'levels';
-    if (!canDrag) {
-        container.innerHTML = '';
-        return;
-    }
     container.innerHTML = REPLAY_LEVEL_DEFS.map(def => {
         const price = getReplayLevelPrice(def.key);
         if (!Number.isFinite(price)) return '';
         const y = replayState.series.priceToCoordinate(price);
         if (y == null) return '';
-        return `<div class="replay-level-drag-strip" data-level-key="${def.key}" style="top:${y - 4}px" title="Drag ${def.title}"><span class="replay-level-drag-line"></span></div>`;
+        return `<div class="replay-level-drag-strip" data-level-key="${def.key}" style="top:${y - 6}px" title="Hover & drag — ${def.title}"><span class="replay-level-drag-line"></span></div>`;
     }).join('');
 
     container.querySelectorAll('.replay-level-drag-strip').forEach(strip => {
         strip.onmousedown = (e) => {
             if (e.button !== 0) return;
             if (replayState.levelsLocked || replayState.levelsHidden) return;
-            if (replayState.drawTool !== 'levels') return;
+            if (['hline', 'trendline', 'measure', 'text', 'brush'].includes(replayState.drawTool)) return;
             replayState.draggingLevel = strip.dataset.levelKey;
             document.querySelector('.replay-chart-wrap')?.classList.add('replay-chart-wrap--dragging-level');
             e.preventDefault();
@@ -3999,6 +4027,117 @@ function setReplayLevelPrice(key, price) {
     updateReplayLevelHandles();
 }
 
+function removeReplayDrawing(drawing) {
+    if (!drawing) return;
+    if (drawing.priceLine) {
+        try { replayState.series?.removePriceLine(drawing.priceLine); } catch (e) { /* ignore */ }
+    }
+    if (drawing.lineSeries) {
+        try { replayState.chart?.removeSeries(drawing.lineSeries); } catch (e) { /* ignore */ }
+    }
+    if (drawing.textEl) {
+        drawing.textEl.remove();
+    }
+    if (drawing.brushIndex != null) {
+        replayState.brushPaths.splice(drawing.brushIndex, 1);
+        replayState.userDrawings.forEach(d => {
+            if (d.type === 'brush' && d.brushIndex > drawing.brushIndex) d.brushIndex -= 1;
+        });
+        redrawReplayBrushCanvas();
+    }
+}
+
+function pushReplayDrawHistory(drawing) {
+    replayState.drawHistory.push(drawing);
+    if (replayState.drawHistory.length > 80) replayState.drawHistory.shift();
+    replayState.drawRedoStack = [];
+}
+
+function undoReplayDrawing() {
+    const last = replayState.drawHistory.pop();
+    if (!last) return;
+    removeReplayDrawing(last);
+    replayState.userDrawings = replayState.userDrawings.filter(d => d !== last);
+    replayState.drawRedoStack.push(last);
+}
+
+function redoReplayDrawing() {
+    const item = replayState.drawRedoStack.pop();
+    if (!item) return;
+    if (item.type === 'hline' && replayState.series) {
+        const line = replayState.series.createPriceLine(item.opts);
+        item.priceLine = line;
+        replayState.userDrawings.push(item);
+    } else if (item.type === 'trendline' && item.trendData && replayState.chart) {
+        const lineSeries = replayState.chart.addLineSeries(item.seriesOpts || {
+            color: getReplayStrokeColor(),
+            lineWidth: getReplayLineWidth(),
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false
+        });
+        lineSeries.setData(item.trendData);
+        item.lineSeries = lineSeries;
+        replayState.userDrawings.push(item);
+    } else if (item.type === 'measure' && item.trendData && replayState.chart) {
+        const lineSeries = replayState.chart.addLineSeries(item.seriesOpts || {
+            color: getReplayStrokeColor(),
+            lineWidth: getReplayLineWidth(),
+            lineStyle: 2,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false
+        });
+        lineSeries.setData(item.trendData);
+        item.lineSeries = lineSeries;
+        replayState.userDrawings.push(item);
+    } else if (item.type === 'brush' && item.points) {
+        replayState.brushPaths.push(item.points);
+        item.brushIndex = replayState.brushPaths.length - 1;
+        redrawReplayBrushCanvas();
+    } else if (item.type === 'text' && item.textData) {
+        const el = createReplayTextLabel(item.textData);
+        item.textEl = el;
+        replayState.userDrawings.push(item);
+    }
+    replayState.drawHistory.push(item);
+}
+
+function redrawReplayBrushCanvas() {
+    const canvas = document.getElementById('replayBrushCanvas');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.strokeStyle = getReplayStrokeColor();
+    ctx.lineWidth = getReplayLineWidth();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    (replayState.brushPaths || []).forEach(points => {
+        if (!points?.length) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        points.forEach(p => ctx.lineTo(p.x, p.y));
+        ctx.stroke();
+    });
+}
+
+function createReplayTextLabel({ x, y, text, color }) {
+    const layer = document.getElementById('replayTextLayer');
+    if (!layer) return null;
+    const el = document.createElement('div');
+    el.className = 'replay-text-label';
+    el.textContent = text;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.borderColor = hexToRgba(color || replayState.drawStyle.color, 0.65);
+    el.style.color = color || replayState.drawStyle.color;
+    layer.appendChild(el);
+    return el;
+}
+
 function clearReplayUserDrawings() {
     (replayState.userDrawings || []).forEach(d => {
         if (d.priceLine) {
@@ -4009,9 +4148,14 @@ function clearReplayUserDrawings() {
         }
     });
     replayState.userDrawings = [];
+    replayState.brushPaths = [];
+    replayState.drawHistory = [];
+    replayState.drawRedoStack = [];
     replayState.measurePending = null;
     const label = document.getElementById('replayMeasureLabel');
     if (label) label.hidden = true;
+    document.getElementById('replayTextLayer')?.replaceChildren();
+    redrawReplayBrushCanvas();
 }
 
 function getReplayPanOptions(enabled) {
@@ -4047,22 +4191,35 @@ function collectReplayPricePoints(candles) {
     return prices.filter(Number.isFinite);
 }
 
+function withSuppressedChartEvents(fn) {
+    replayState.suppressChartEvents = true;
+    try { fn(); } finally { replayState.suppressChartEvents = false; }
+}
+
+function syncReplayAutoscaleMode() {
+    if (!replayState.series || !replayState.chart) return;
+    replayState.series.applyOptions({
+        autoscaleInfoProvider: replayState.userAdjustedPrice
+            ? () => null
+            : (original) => original()
+    });
+    replayState.chart.priceScale('right').applyOptions({
+        autoScale: !replayState.userAdjustedPrice
+    });
+}
+
 function applyReplayPriceViewport(candles, force = false) {
-    if (!replayState.series) return;
-    const ps = replayState.series.priceScale();
-    if (!ps) return;
-    if (!force && replayState.priceRangeLocked) {
-        const current = ps.getVisibleRange?.();
-        if (current && Number.isFinite(current.from) && Number.isFinite(current.to)) return;
-    }
-    const prices = collectReplayPricePoints(candles);
-    if (!prices.length) return;
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const pad = Math.max((max - min) * 0.14, 1);
-    ps.applyOptions({ autoScale: false });
-    ps.setVisibleRange({ from: min - pad, to: max + pad });
-    replayState.priceRangeLocked = true;
+    if (!replayState.series || !replayState.chart) return;
+    if (replayState.userAdjustedPrice && !force) return;
+    if (force) replayState.userAdjustedPrice = false;
+    syncReplayAutoscaleMode();
+}
+
+function unlockReplayPriceViewport() {
+    replayState.userAdjustedPrice = false;
+    replayState.lockedPriceRange = null;
+    replayState.priceRangeLocked = false;
+    syncReplayAutoscaleMode();
 }
 
 function setReplayDrawTool(tool) {
@@ -4070,14 +4227,57 @@ function setReplayDrawTool(tool) {
     document.querySelectorAll('.replay-draw-btn[data-draw-tool]').forEach(btn => {
         btn.classList.toggle('replay-draw-btn--active', btn.dataset.drawTool === tool);
     });
-    const pan = tool === 'crosshair' || tool === 'levels';
-    replayState.chart?.applyOptions(getReplayPanOptions(pan));
+    replayState.chart?.applyOptions(getReplayPanOptions(true));
     const wrap = document.querySelector('.replay-chart-wrap');
+    const brushCanvas = document.getElementById('replayBrushCanvas');
+    const styleBar = document.getElementById('replayDrawStyleBar');
     if (wrap) {
-        wrap.classList.toggle('replay-chart-wrap--tool-levels', tool === 'levels');
-        wrap.classList.toggle('replay-chart-wrap--tool-draw', ['trendline', 'hline', 'measure'].includes(tool));
+        wrap.classList.toggle('replay-chart-wrap--tool-draw', ['trendline', 'hline', 'measure', 'text'].includes(tool));
+        wrap.classList.toggle('replay-chart-wrap--tool-brush', tool === 'brush');
+    }
+    if (brushCanvas) {
+        brushCanvas.style.pointerEvents = tool === 'brush' ? 'auto' : 'none';
+    }
+    if (styleBar) {
+        const showStyle = ['trendline', 'hline', 'measure', 'text', 'brush'].includes(tool);
+        styleBar.hidden = !showStyle;
     }
     updateReplayLevelHandles();
+}
+
+function initReplayDrawStyleBar() {
+    const colorsEl = document.getElementById('replayStyleColors');
+    if (!colorsEl) return;
+
+    colorsEl.innerHTML = REPLAY_DRAW_PALETTE.map(c => `
+        <button type="button" class="replay-style-swatch${c === replayState.drawStyle.color ? ' replay-style-swatch--active' : ''}"
+            data-color="${c}" style="--swatch:${c}" title="Stroke color"></button>
+    `).join('');
+
+    colorsEl.querySelectorAll('.replay-style-swatch').forEach(btn => {
+        btn.addEventListener('click', () => {
+            replayState.drawStyle.color = btn.dataset.color;
+            colorsEl.querySelectorAll('.replay-style-swatch').forEach(b =>
+                b.classList.toggle('replay-style-swatch--active', b.dataset.color === replayState.drawStyle.color)
+            );
+        });
+    });
+
+    document.querySelectorAll('.replay-style-width').forEach(btn => {
+        btn.addEventListener('click', () => {
+            replayState.drawStyle.width = parseInt(btn.dataset.width, 10) || 2;
+            document.querySelectorAll('.replay-style-width').forEach(b =>
+                b.classList.toggle('replay-style-width--active', parseInt(b.dataset.width, 10) === replayState.drawStyle.width)
+            );
+        });
+    });
+
+    const opacityInput = document.getElementById('replayStyleOpacity');
+    const opacityVal = document.getElementById('replayStyleOpacityVal');
+    opacityInput?.addEventListener('input', () => {
+        replayState.drawStyle.opacity = parseInt(opacityInput.value, 10) || 100;
+        if (opacityVal) opacityVal.textContent = `${replayState.drawStyle.opacity}%`;
+    });
 }
 
 function replayZoomChart(factor) {
@@ -4087,7 +4287,9 @@ function replayZoomChart(factor) {
     if (!range) return;
     const center = (range.from + range.to) / 2;
     const half = Math.max(8, ((range.to - range.from) / 2) * factor);
-    ts.setVisibleLogicalRange({ from: center - half, to: center + half });
+    withSuppressedChartEvents(() => {
+        ts.setVisibleLogicalRange({ from: center - half, to: center + half });
+    });
     scheduleSessionOverlayUpdate();
 }
 
@@ -4101,15 +4303,12 @@ function handleReplayChartPointerDown(e) {
     const time = replayState.chart.timeScale().coordinateToTime(x);
 
     if (replayState.drawTool === 'hline' && Number.isFinite(price)) {
-        const line = replayState.series.createPriceLine({
-            price,
-            color: '#e91e63',
-            lineWidth: 1,
-            lineStyle: 0,
-            axisLabelVisible: true,
-            title: price.toFixed(2)
-        });
-        replayState.userDrawings.push({ type: 'hline', priceLine: line });
+        const stroke = getReplayStrokeColor();
+        const width = getReplayLineWidth();
+        const opts = { price, color: stroke, lineWidth: width, lineStyle: 0, axisLabelVisible: true, title: price.toFixed(2) };
+        const line = replayState.series.createPriceLine(opts);
+        replayState.userDrawings.push({ type: 'hline', priceLine: line, opts });
+        pushReplayDrawHistory(replayState.userDrawings[replayState.userDrawings.length - 1]);
         return;
     }
 
@@ -4119,21 +4318,21 @@ function handleReplayChartPointerDown(e) {
             replayState.trendPending = { time, price };
             return;
         }
-        const lineSeries = replayState.chart.addLineSeries({
-            color: '#e91e63',
-            lineWidth: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false
-        });
+        const stroke = getReplayStrokeColor();
+        const width = getReplayLineWidth();
+        const seriesOpts = { color: stroke, lineWidth: width, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+        const lineSeries = replayState.chart.addLineSeries(seriesOpts);
         const t1 = pending.time;
         const t2 = time;
         const p1 = pending.price;
         const p2 = price;
-        lineSeries.setData(t1 <= t2
+        const trendData = t1 <= t2
             ? [{ time: t1, value: p1 }, { time: t2, value: p2 }]
-            : [{ time: t2, value: p2 }, { time: t1, value: p1 }]);
-        replayState.userDrawings.push({ type: 'trendline', lineSeries });
+            : [{ time: t2, value: p2 }, { time: t1, value: p1 }];
+        lineSeries.setData(trendData);
+        const drawing = { type: 'trendline', lineSeries, trendData, seriesOpts };
+        replayState.userDrawings.push(drawing);
+        pushReplayDrawHistory(drawing);
         replayState.trendPending = null;
         return;
     }
@@ -4160,21 +4359,29 @@ function handleReplayChartPointerDown(e) {
             label.style.left = `${(x + pending.x) / 2}px`;
             label.style.top = `${Math.min(y, pending.y) - 32}px`;
         }
-        const measureLine = replayState.chart.addLineSeries({
-            color: '#f59e0b',
-            lineWidth: 2,
-            lineStyle: 2,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: false
-        });
+        const stroke = getReplayStrokeColor();
+        const width = getReplayLineWidth();
+        const seriesOpts = { color: stroke, lineWidth: width, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+        const measureLine = replayState.chart.addLineSeries(seriesOpts);
         const t1 = pending.time;
         const t2 = time;
-        measureLine.setData(t1 <= t2
+        const trendData = t1 <= t2
             ? [{ time: t1, value: pending.price }, { time: t2, value: price }]
-            : [{ time: t2, value: price }, { time: t1, value: pending.price }]);
-        replayState.userDrawings.push({ type: 'measure', lineSeries: measureLine });
+            : [{ time: t2, value: price }, { time: t1, value: pending.price }];
+        measureLine.setData(trendData);
+        const drawing = { type: 'measure', lineSeries: measureLine, trendData, seriesOpts };
+        replayState.userDrawings.push(drawing);
+        pushReplayDrawHistory(drawing);
         replayState.measurePending = null;
+    }
+
+    if (replayState.drawTool === 'text' && time != null && Number.isFinite(price)) {
+        const text = window.prompt('Label text:', '');
+        if (!text?.trim()) return;
+        const el = createReplayTextLabel({ x, y: y - 10, text: text.trim() });
+        const drawing = { type: 'text', textEl: el, textData: { x, y: y - 10, text: text.trim(), color: replayState.drawStyle.color } };
+        replayState.userDrawings.push(drawing);
+        pushReplayDrawHistory(drawing);
     }
 }
 
@@ -4190,8 +4397,8 @@ function initReplayDrawToolbar() {
     document.getElementById('replayZoomInBtn')?.addEventListener('click', () => replayZoomChart(0.72));
     document.getElementById('replayZoomOutBtn')?.addEventListener('click', () => replayZoomChart(1.38));
     document.getElementById('replayFitBtn')?.addEventListener('click', () => {
+        unlockReplayPriceViewport();
         replayState.needsFit = true;
-        replayState.priceRangeLocked = false;
         renderReplayFrame();
     });
 
@@ -4207,6 +4414,13 @@ function initReplayDrawToolbar() {
         applyReplayPriceLines(replayState.levels);
     });
 
+    document.getElementById('replayUndoBtn')?.addEventListener('click', undoReplayDrawing);
+    document.getElementById('replayRedoBtn')?.addEventListener('click', redoReplayDrawing);
+
+    document.querySelectorAll('[data-replay-interval]').forEach(btn => {
+        btn.addEventListener('click', () => setReplayInterval(parseInt(btn.dataset.replayInterval, 10) || 5));
+    });
+
     document.getElementById('replayClearDrawBtn')?.addEventListener('click', () => {
         clearReplayUserDrawings();
         replayState.trendPending = null;
@@ -4217,10 +4431,50 @@ function initReplayDrawToolbar() {
     if (!wrap || !chartEl) return;
 
     chartEl.addEventListener('mousedown', (e) => {
-        if (!['hline', 'trendline', 'measure'].includes(replayState.drawTool)) return;
+        if (!['hline', 'trendline', 'measure', 'text'].includes(replayState.drawTool)) return;
         handleReplayChartPointerDown(e);
         e.stopPropagation();
     });
+
+    chartEl.addEventListener('mousedown', (e) => {
+        if (replayState.drawTool !== 'crosshair' || e.button !== 0) return;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const onMove = (ev) => {
+            if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 4) {
+                replayState.userAdjustedPrice = true;
+                syncReplayAutoscaleMode();
+            }
+        };
+        const onUp = () => {
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    });
+
+    wrap?.addEventListener('wheel', () => {
+        if (replayState.drawTool === 'crosshair') {
+            replayState.userAdjustedPrice = true;
+            syncReplayAutoscaleMode();
+        }
+    }, { passive: true });
+
+    document.addEventListener('keydown', (e) => {
+        if (!document.getElementById('replayChart')) return;
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            undoReplayDrawing();
+        }
+        if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
+            e.preventDefault();
+            redoReplayDrawing();
+        }
+    });
+
+    initReplayBrushCanvas();
+    initReplayDrawStyleBar();
 
     window.addEventListener('mousemove', (e) => {
         if (!replayState.draggingLevel || !replayState.series || e.buttons !== 1) return;
@@ -4268,14 +4522,13 @@ function updateSessionOverlays() {
     }
     const ts = replayState.chart.timeScale();
     const dateStr = trade.date;
-    const preStart = tradeTimeToChartTime(dateStr, '4:00');
-    const mktOpen = tradeTimeToChartTime(dateStr, '9:30');
-    const postStart = tradeTimeToChartTime(dateStr, '16:00');
-    const postEnd = tradeTimeToChartTime(dateStr, '20:00');
+    const mktClose = tradeTimeToChartTime(dateStr, '16:00');
+    const afterHoursEnd = tradeTimeToChartTime(dateStr, '20:00');
+    const todayStart = tradeTimeToChartTime(dateStr, '4:00');
     const all = replayState.allCandles?.length
         ? replayState.allCandles
         : [...(replayState.preCandles || []), ...(replayState.tradeCandles || []), ...(replayState.postCandles || [])];
-    const barSec = Math.max(60, (replayState.intervalMin || 1) * 60);
+    const barSec = Math.max(60, (replayState.intervalMin || 5) * 60);
 
     const coordForTime = (t) => {
         let x = ts.timeToCoordinate(t);
@@ -4312,23 +4565,20 @@ function updateSessionOverlays() {
         return `<div class="${cls}" style="left:${left}px;width:${width}px"></div>`;
     };
 
-    const preCandles = all.filter(c => c.time >= preStart && c.time < mktOpen);
-    const postCandles = all.filter(c => c.time >= postStart && c.time <= postEnd);
-    const todayPreStart = tradeTimeToChartTime(dateStr, '4:00');
-    const priorDayCandles = all.filter(c => c.time < todayPreStart);
+    const overnightCandles = all.filter(c => c.time >= mktClose && c.time <= afterHoursEnd);
+    const priorDayCandles = all.filter(c => c.time < todayStart);
     const regions = [];
     if (priorDayCandles.length) {
         regions.push(buildRegion(
             priorDayCandles[0].time,
-            todayPreStart,
+            todayStart,
             'replay-shade-prior-day',
             priorDayCandles
         ));
     }
-    regions.push(
-        buildRegion(preStart, mktOpen, 'replay-shade-premarket', preCandles),
-        buildRegion(postStart, postEnd, 'replay-shade-postmarket', postCandles)
-    );
+    if (overnightCandles.length) {
+        regions.push(buildRegion(mktClose, afterHoursEnd, 'replay-shade-overnight', overnightCandles));
+    }
     overlay.innerHTML = regions.filter(Boolean).join('');
 }
 
@@ -4340,6 +4590,25 @@ function scheduleSessionOverlayUpdate() {
             updateReplayLevelHandles();
         });
     });
+}
+
+function bindReplayOverlayResize() {
+    if (replayState.overlayResizeBound) return;
+    replayState.overlayResizeBound = true;
+    const nodes = [
+        document.querySelector('.replay-chart-wrap'),
+        document.querySelector('.replay-chart-area'),
+        document.querySelector('.replay-stage'),
+        document.getElementById('replayChart')
+    ].filter(Boolean);
+    const bump = () => scheduleSessionOverlayUpdate();
+    if (typeof ResizeObserver !== 'undefined') {
+        const obs = new ResizeObserver(bump);
+        nodes.forEach(n => obs.observe(n));
+        replayState.overlayResizeObs = obs;
+    }
+    window.addEventListener('resize', bump);
+    replayState.chart?.timeScale()?.subscribeSizeChange?.(bump);
 }
 
 function replayTimeToCoordinate(ts, chartTime, candles) {
@@ -4375,11 +4644,11 @@ function fitReplayTradeViewport() {
     const ts = replayState.chart?.timeScale();
     const exec = replayState.exec;
     if (!ts || !exec) return false;
-    const barSec = Math.max(60, (replayState.intervalMin || 1) * 60);
+    const barSec = Math.max(60, (replayState.intervalMin || 5) * 60);
     const from = exec.entryTime - barSec * 50;
     const to = exec.exitTime + barSec * 12;
     try {
-        ts.setVisibleRange({ from, to });
+        withSuppressedChartEvents(() => ts.setVisibleRange({ from, to }));
         return true;
     } catch (e) {
         return false;
@@ -4394,52 +4663,83 @@ function setInitialReplayViewport(visibleCount) {
         ...(replayState.postCandles || [])
     ];
     if (fitReplayTradeViewport()) {
-        applyReplayPriceViewport(fitCandles.length ? fitCandles : replayState.allCandles, true);
+        try {
+            applyReplayPriceViewport(fitCandles.length ? fitCandles : replayState.allCandles, true);
+        } catch (e) { /* ignore */ }
         scheduleSessionOverlayUpdate();
         return;
     }
     const ts = replayState.chart.timeScale();
     const windowSize = Math.min(visibleCount, 140);
-    ts.setVisibleLogicalRange({
-        from: Math.max(0, visibleCount - windowSize),
-        to: visibleCount + 12
+    withSuppressedChartEvents(() => {
+        ts.setVisibleLogicalRange({
+            from: Math.max(0, visibleCount - windowSize),
+            to: visibleCount + 12
+        });
     });
-    applyReplayPriceViewport(fitCandles.length ? fitCandles : replayState.allCandles, true);
+    try {
+        applyReplayPriceViewport(fitCandles.length ? fitCandles : replayState.allCandles, true);
+    } catch (e) { /* ignore */ }
     scheduleSessionOverlayUpdate();
 }
 
 function updateReplayIndicators(visible) {
     if (!visible.length || !replayState.vwapSeries || !replayState.emaSeries) return;
-    const sessionOpen = replayState.selectedTrade
-        ? tradeTimeToChartTime(replayState.selectedTrade.date, '9:30')
-        : 0;
     replayState.emaSeries.setData(calcEMA(visible, 8));
-    replayState.vwapSeries.setData(calcVwap(visible, sessionOpen));
+    replayState.vwapSeries.setData(calcVwap(visible));
 }
 
 async function fetchMarketChartJson(url) {
     const errors = [];
-    const tryDirect = async () => {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-    };
-    const tryAllOrigins = async () => {
-        const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-        const res = await fetch(proxy);
-        if (!res.ok) throw new Error(`Proxy HTTP ${res.status}`);
-        const wrap = await res.json();
-        if (!wrap?.contents) throw new Error('Empty proxy response');
-        return JSON.parse(wrap.contents);
-    };
-    for (const fn of [tryDirect, tryAllOrigins]) {
+    const yahoo2 = url.replace('query1.finance.yahoo.com', 'query2.finance.yahoo.com');
+    const attempts = [
+        async () => {
+            const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+            const res = await fetch(proxy);
+            if (!res.ok) throw new Error(`proxy ${res.status}`);
+            return res.json();
+        },
+        async () => {
+            const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+            const res = await fetch(proxy);
+            if (!res.ok) throw new Error(`allorigins ${res.status}`);
+            return res.json();
+        },
+        async () => {
+            const proxy = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`;
+            const res = await fetch(proxy);
+            if (!res.ok) throw new Error(`codetabs ${res.status}`);
+            return res.json();
+        },
+        async () => {
+            const proxy = `https://corsproxy.io/?${encodeURIComponent(yahoo2)}`;
+            const res = await fetch(proxy);
+            if (!res.ok) throw new Error(`yahoo2 ${res.status}`);
+            return res.json();
+        },
+        async () => {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+        },
+        async () => {
+            const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+            const res = await fetch(proxy);
+            if (!res.ok) throw new Error(`allorigins-wrap ${res.status}`);
+            const wrap = await res.json();
+            if (!wrap?.contents) throw new Error('Empty allorigins response');
+            return JSON.parse(wrap.contents);
+        }
+    ];
+    for (const fn of attempts) {
         try {
             return await fn();
         } catch (err) {
-            errors.push(err.message);
+            const msg = err.message || String(err);
+            if (!errors.includes(msg)) errors.push(msg);
         }
     }
-    throw new Error(errors.join(' · '));
+    throw new Error(errors.slice(0, 3).join(' · ') || 'Network request failed');
 }
 
 async function fetchYahooMarketCandles(ticker, dateStr) {
@@ -4638,20 +4938,32 @@ function getReplayBarWidthPx(ts, candles, intervalMin) {
     return 10;
 }
 
-function buildReplayPositionZonesHtml(xEntry, xExit, yEntry, yExit, dir, label, preview = false) {
+function getPositionZoneLayout(yEntry, yExit, dir) {
+    const span = Math.max(6, Math.abs(yExit - yEntry));
+    const redH = Math.max(3, span / 2);
+    if (dir === 'short') {
+        return {
+            green: { top: yEntry, height: span },
+            risk: { top: yEntry - redH, height: redH },
+            zoneClass: 'short'
+        };
+    }
+    return {
+        green: { top: yEntry - span, height: span },
+        risk: { top: yEntry, height: redH },
+        zoneClass: 'long'
+    };
+}
+
+function buildReplayPositionZonesHtml(xEntry, xExit, yEntry, yExit, dir, preview = false) {
     if ([xEntry, xExit, yEntry, yExit].some(v => v == null)) return '';
     const left = Math.min(xEntry, xExit);
     const width = Math.max(6, Math.abs(xExit - xEntry));
-    const yTop = Math.min(yEntry, yExit);
-    const yBottom = Math.max(yEntry, yExit);
-    const greenHeight = Math.max(6, yBottom - yTop);
-    const redHeight = Math.max(3, greenHeight / 2);
+    const layout = getPositionZoneLayout(yEntry, yExit, dir);
     const previewClass = preview ? ' replay-position-zone--preview' : '';
     return `
-        <div class="replay-position-zone replay-position-zone--${dir}${previewClass}" style="left:${left}px;top:${yTop}px;width:${width}px;height:${greenHeight}px">
-            <span class="replay-direction-badge replay-direction-badge--${dir}">${label}</span>
-        </div>
-        <div class="replay-position-zone replay-position-zone--risk${previewClass}" style="left:${left}px;top:${yBottom}px;width:${width}px;height:${redHeight}px"></div>`;
+        <div class="replay-position-zone replay-position-zone--${layout.zoneClass}${previewClass}" style="left:${left}px;top:${layout.green.top}px;width:${width}px;height:${layout.green.height}px"></div>
+        <div class="replay-position-zone replay-position-zone--risk replay-position-zone--risk-${layout.zoneClass}${previewClass}" style="left:${left}px;top:${layout.risk.top}px;width:${width}px;height:${layout.risk.height}px"></div>`;
 }
 
 function buildReplayExecMarkerHtml(kind, candleX, y, exec, barWidth) {
@@ -4717,9 +5029,9 @@ function updateReplayExecOverlay() {
     }
 
     if (inTrade && xExit != null && yExit != null) {
-        html += buildReplayPositionZonesHtml(xEntry, xExit, yEntry, yExit, dir, exec.label, false);
+        html += buildReplayPositionZonesHtml(xEntry, xExit, yEntry, yExit, dir, false);
     } else if (!inTrade && xExitTarget != null && yExitExact != null) {
-        html += buildReplayPositionZonesHtml(xEntry, xExitTarget, yEntry, yExitExact, dir, exec.label, true);
+        html += buildReplayPositionZonesHtml(xEntry, xExitTarget, yEntry, yExitExact, dir, true);
     }
 
     overlay.innerHTML = html;
@@ -4797,27 +5109,20 @@ function renderReplayFrame() {
     }
 
     const ts = replayState.chart?.timeScale();
-    const ps = replayState.series?.priceScale();
     const keepTimeRange = ts && !replayState.needsFit ? ts.getVisibleLogicalRange() : null;
-    const keepPriceRange = ps && replayState.priceRangeLocked && !replayState.needsFit
-        ? ps.getVisibleRange?.()
-        : null;
 
+    syncReplayAutoscaleMode();
     replayState.series.setData(visible);
     replayState.series.setMarkers(buildReplaySeriesMarkers());
     updateReplayIndicators(visible);
 
     if (keepTimeRange) {
-        try { ts.setVisibleLogicalRange(keepTimeRange); } catch (e) { /* ignore */ }
+        withSuppressedChartEvents(() => {
+            try { ts.setVisibleLogicalRange(keepTimeRange); } catch (e) { /* ignore */ }
+        });
     }
-    if (keepPriceRange && Number.isFinite(keepPriceRange.from) && Number.isFinite(keepPriceRange.to)) {
-        try { ps.setVisibleRange(keepPriceRange); } catch (e) { /* ignore */ }
-    } else if (replayState.needsFit) {
-        applyReplayPriceViewport([
-            ...(replayState.preCandles || []),
-            ...(replayState.tradeCandles || []),
-            ...(replayState.postCandles || [])
-        ], true);
+    if (replayState.needsFit) {
+        try { applyReplayPriceViewport(visible, true); } catch (e) { /* ignore */ }
     }
 
     const progress = document.getElementById('replayProgress');
@@ -5055,7 +5360,7 @@ function loadReplayTrade(trade) {
         document.getElementById('replayLockLevelsBtn')?.classList.remove('replay-draw-btn--active');
         document.getElementById('replayHideLevelsBtn')?.classList.remove('replay-draw-btn--active');
         replayState.needsFit = true;
-        replayState.priceRangeLocked = false;
+        unlockReplayPriceViewport();
         setReplayChartStatus('');
         applyReplayPriceLines(result.levels);
 
@@ -5071,7 +5376,7 @@ function loadReplayTrade(trade) {
         }
         replayState.currentIndex = -1;
 
-        setReplayDataBadge(`Live · ${result.ticker} · ${replayState.intervalMin}m · Yahoo 1m (prior day + 1h post-exit)`);
+        setReplayDataBadge(`Live · ${result.ticker} · ${replayState.intervalMin}m · Yahoo (prior day + 1h post-exit)`);
         renderReplayTradeDetails(trade);
         renderReplayFrame();
     }).catch(err => {
@@ -5092,8 +5397,11 @@ function loadReplayTrade(trade) {
         replayState.emaSeries?.setData([]);
         updateSessionOverlays();
         setReplayDataBadge('Market data failed', 'warn');
+        const detail = err.message && err.message !== 'Failed to fetch'
+            ? err.message
+            : 'Check your internet connection and try again.';
         setReplayChartStatus(
-            `Could not load real ${sym} stock candles for this date. ${err.message}. 1m data is only available for recent trading days.`,
+            `Could not load ${sym} candles for this date. ${detail} Intraday data may be unavailable for older trading days.`,
             true
         );
         updateReplayOhlc(null);
@@ -5147,12 +5455,26 @@ function initReplayChart() {
             vertLines: { color: 'rgba(42, 46, 57, 0.8)' },
             horzLines: { color: 'rgba(42, 46, 57, 0.8)' }
         },
+        localization: {
+            timeFormatter: (t) => {
+                if (typeof t === 'object' && t !== null && t.year) {
+                    return formatChartWallTime(Math.floor(Date.UTC(t.year, t.month - 1, t.day) / 1000));
+                }
+                return formatChartWallTime(t);
+            }
+        },
         rightPriceScale: {
             borderColor: '#2a2e39',
-            autoScale: false,
+            autoScale: true,
             scaleMargins: { top: 0.06, bottom: 0.06 }
         },
-        timeScale: { borderColor: '#2a2e39', timeVisible: true, secondsVisible: false, rightOffset: 12 },
+        timeScale: {
+            borderColor: '#2a2e39',
+            timeVisible: true,
+            secondsVisible: false,
+            rightOffset: 12,
+            tickMarkFormatter: (time) => formatChartWallTime(time)
+        },
         crosshair: {
             mode: LightweightCharts.CrosshairMode.Normal,
             vertLine: { color: 'rgba(120, 123, 134, 0.5)', width: 1, style: 2 },
@@ -5170,8 +5492,8 @@ function initReplayChart() {
     });
 
     replayState.vwapSeries = replayState.chart.addLineSeries({
-        color: '#ff9800',
-        lineWidth: 2,
+        color: '#E8C547',
+        lineWidth: 1,
         title: 'VWAP',
         priceLineVisible: false,
         lastValueVisible: true
@@ -5200,6 +5522,7 @@ function initReplayChart() {
     }
     resize();
     window.addEventListener('resize', resize);
+    bindReplayOverlayResize();
 
     replayState.chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
         scheduleSessionOverlayUpdate();
@@ -5214,6 +5537,9 @@ function initReplayChart() {
     const priceScale = replayState.chart.priceScale('right');
     if (priceScale && typeof priceScale.subscribeVisibleLogicalRangeChange === 'function') {
         priceScale.subscribeVisibleLogicalRangeChange(() => {
+            if (replayState.suppressChartEvents) return;
+            replayState.userAdjustedPrice = true;
+            syncReplayAutoscaleMode();
             scheduleSessionOverlayUpdate();
         });
     }
@@ -5221,10 +5547,73 @@ function initReplayChart() {
 
 function setReplayInterval(min) {
     replayState.intervalMin = min;
-    document.querySelectorAll('.replay-pill[data-interval]').forEach(btn => {
-        btn.classList.toggle('replay-pill--active', parseInt(btn.dataset.interval, 10) === min);
+    document.querySelectorAll('[data-replay-interval]').forEach(btn => {
+        const v = parseInt(btn.dataset.replayInterval, 10);
+        btn.classList.toggle('replay-pill--active', v === min);
+        btn.classList.toggle('replay-draw-interval--active', v === min);
     });
     if (replayState.selectedTrade) loadReplayTrade(replayState.selectedTrade);
+}
+
+function initReplayBrushCanvas() {
+    const canvas = document.getElementById('replayBrushCanvas');
+    const wrap = document.querySelector('.replay-chart-wrap');
+    if (!canvas || !wrap) return;
+
+    const syncSize = () => {
+        const rect = wrap.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(rect.width * dpr);
+        canvas.height = Math.floor(rect.height * dpr);
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        redrawReplayBrushCanvas();
+    };
+    syncSize();
+    if (typeof ResizeObserver !== 'undefined') {
+        new ResizeObserver(syncSize).observe(wrap);
+    }
+
+    let drawing = false;
+    let currentPath = null;
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (replayState.drawTool !== 'brush' || e.button !== 0) return;
+        drawing = true;
+        const rect = canvas.getBoundingClientRect();
+        currentPath = [{ x: e.clientX - rect.left, y: e.clientY - rect.top }];
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!drawing || !currentPath || replayState.drawTool !== 'brush') return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        currentPath.push({ x, y });
+        const ctx = canvas.getContext('2d');
+        const prev = currentPath[currentPath.length - 2];
+        ctx.strokeStyle = getReplayStrokeColor();
+        ctx.lineWidth = getReplayLineWidth();
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!drawing || !currentPath?.length) return;
+        drawing = false;
+        replayState.brushPaths.push(currentPath);
+        const drawingRec = { type: 'brush', points: currentPath, brushIndex: replayState.brushPaths.length - 1 };
+        replayState.userDrawings.push(drawingRec);
+        pushReplayDrawHistory(drawingRec);
+        currentPath = null;
+    });
 }
 
 function initTradeReplay() {
@@ -5234,6 +5623,7 @@ function initTradeReplay() {
     initReplayChart();
     initReplayDrawToolbar();
     setReplayDrawTool('crosshair');
+    setReplayInterval(5);
     renderReplayWatchlistPanel();
 
     document.querySelectorAll('.replay-rail-btn[data-replay-panel]').forEach(btn => {
@@ -5241,41 +5631,12 @@ function initTradeReplay() {
     });
 
     const dates = getReplayDates();
-    const datePicker = document.getElementById('replayDatePicker');
-    if (datePicker) {
-        if (dates.length) {
-            datePicker.innerHTML = dates.map(d =>
-                `<option value="${d}">${formatTradeDate(d)}</option>`
-            ).join('');
-            replayState.selectedDate = dates[dates.length - 1];
-            datePicker.value = replayState.selectedDate;
-        } else {
-            const now = new Date().toISOString().slice(0, 10);
-            replayState.selectedDate = now;
-            datePicker.innerHTML = `<option value="${now}">${formatTradeDate(now)}</option>`;
-            datePicker.value = now;
-        }
-        datePicker.addEventListener('change', () => {
-            replayState.selectedDate = datePicker.value;
-            replayState.selectedTradeId = null;
-            replayState.selectedTrade = null;
-            pauseReplay();
-            renderReplayTradeList();
-            renderReplayExecutions(null);
-            renderReplayTradeDetails(null);
-            updateReplaySideHeader(null);
-            const dayTrades = getTradesForReplayDate(replayState.selectedDate);
-            if (dayTrades.length) loadReplayTrade(dayTrades[0]);
-            else {
-                replayState.preCandles = [];
-                replayState.tradeCandles = [];
-                replayState.series?.setData([]);
-                updateReplayOhlc(null);
-                document.getElementById('replayChartTitle').textContent = 'No trades this day';
-                document.getElementById('replayChartPnl').textContent = '—';
-            }
-        });
+    if (dates.length) {
+        replayState.selectedDate = dates[dates.length - 1];
+    } else {
+        replayState.selectedDate = new Date().toISOString().slice(0, 10);
     }
+    renderReplayDateCalendar(replayState.selectedDate);
 
     document.getElementById('replayPlayBtn')?.addEventListener('click', toggleReplayPlay);
     document.getElementById('replayForwardBtn')?.addEventListener('click', () => { pauseReplay(); replayStepForward(); });
@@ -5296,10 +5657,6 @@ function initTradeReplay() {
             pauseReplay();
             toggleReplayPlay();
         }
-    });
-
-    document.querySelectorAll('.replay-pill[data-interval]').forEach(btn => {
-        btn.addEventListener('click', () => setReplayInterval(parseInt(btn.dataset.interval, 10) || 1));
     });
 
     document.getElementById('replayOpenTvBtn')?.addEventListener('click', () => {
@@ -5610,8 +5967,181 @@ function getDailyProfitMap() {
     return map;
 }
 
-function renderDayViewMiniCalendar(viewDate) {
-    const panel = document.getElementById('dayMiniCalendarPanel');
+function buildSimulatedSnippetCandles(trade, barCount = 48) {
+    const entryTime = tradeTimeToChartTime(trade.date, trade.time);
+    const exitTime = tradeEndToChartTime(trade);
+    const entryP = parseFloat(trade.entryPrice) || 100 + Math.random() * 20;
+    const exitP = parseFloat(trade.exitPrice)
+        || (getNetProfit(trade) >= 0 ? entryP * 1.012 : entryP * 0.988);
+    const start = entryTime - 25 * 60;
+    const end = exitTime + 20 * 60;
+    const span = Math.max(end - start, 60);
+    const candles = [];
+    for (let i = 0; i < barCount; i++) {
+        const t = start + Math.floor((span * i) / Math.max(1, barCount - 1));
+        const prog = i / Math.max(1, barCount - 1);
+        const mid = entryP + (exitP - entryP) * prog;
+        const wick = Math.max(Math.abs(exitP - entryP) * 0.04, 0.15);
+        candles.push({
+            time: t,
+            open: mid - wick * 0.25,
+            high: mid + wick,
+            low: mid - wick,
+            close: mid + wick * 0.15
+        });
+    }
+    return candles;
+}
+
+function filterSnippetCandles(candles, trade) {
+    const entryTime = tradeTimeToChartTime(trade.date, trade.time);
+    const exitTime = tradeEndToChartTime(trade);
+    return candles.filter(c => c.time >= entryTime - 30 * 60 && c.time <= exitTime + 25 * 60);
+}
+
+function drawDayTradeSnippetCanvas(canvas, trade, candles) {
+    if (!canvas || !candles?.length) return;
+    canvas._snippetData = { trade, candles };
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || canvas.parentElement?.clientWidth || 480;
+    const cssH = canvas.clientHeight || 150;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = cssW;
+    const H = cssH;
+    const pad = { l: 6, r: 6, t: 8, b: 16 };
+    const plotW = W - pad.l - pad.r;
+    const plotH = H - pad.t - pad.b;
+
+    const entryTime = tradeTimeToChartTime(trade.date, trade.time);
+    const exitTime = tradeEndToChartTime(trade);
+    const exec = buildReplayExecMeta(trade, candles);
+
+    const prices = candles.flatMap(c => [c.high, c.low]);
+    if (Number.isFinite(exec.entryPrice)) prices.push(exec.entryPrice);
+    if (Number.isFinite(exec.exitPrice)) prices.push(exec.exitPrice);
+    let pMin = Math.min(...prices);
+    let pMax = Math.max(...prices);
+    const pPad = Math.max((pMax - pMin) * 0.12, 0.5);
+    pMin -= pPad;
+    pMax += pPad;
+
+    const tMin = candles[0].time;
+    const tMax = candles[candles.length - 1].time;
+
+    const xAt = (t) => pad.l + ((t - tMin) / Math.max(1, tMax - tMin)) * plotW;
+    const yAt = (p) => pad.t + ((pMax - p) / Math.max(0.0001, pMax - pMin)) * plotH;
+
+    ctx.fillStyle = '#131722';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = 'rgba(42, 46, 57, 0.85)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) {
+        const y = pad.t + (plotH * i) / 3;
+        ctx.beginPath();
+        ctx.moveTo(pad.l, y);
+        ctx.lineTo(W - pad.r, y);
+        ctx.stroke();
+    }
+
+    if (Number.isFinite(exec.entryPrice) && Number.isFinite(exec.exitPrice)) {
+        const x1 = xAt(entryTime);
+        const x2 = xAt(exitTime);
+        const yE = yAt(exec.entryPrice);
+        const yX = yAt(exec.exitPrice);
+        const left = Math.min(x1, x2);
+        const width = Math.max(4, Math.abs(x2 - x1));
+        const layout = getPositionZoneLayout(yE, yX, exec.direction);
+        ctx.fillStyle = 'rgba(38, 166, 154, 0.18)';
+        ctx.fillRect(left, layout.green.top, width, layout.green.height);
+        ctx.fillStyle = 'rgba(239, 83, 80, 0.12)';
+        ctx.fillRect(left, layout.risk.top, width, layout.risk.height);
+    }
+
+    const barW = Math.max(2, (plotW / candles.length) * 0.55);
+    candles.forEach(c => {
+        const x = xAt(c.time);
+        const up = c.close >= c.open;
+        ctx.strokeStyle = up ? '#26a69a' : '#ffffff';
+        ctx.fillStyle = up ? '#26a69a' : '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, yAt(c.high));
+        ctx.lineTo(x, yAt(c.low));
+        ctx.stroke();
+        const yO = yAt(c.open);
+        const yC = yAt(c.close);
+        const top = Math.min(yO, yC);
+        const h = Math.max(1, Math.abs(yC - yO));
+        ctx.fillRect(x - barW / 2, top, barW, h);
+    });
+
+    const drawArrow = (x, y, isExit) => {
+        ctx.strokeStyle = '#ef5350';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        if (isExit) {
+            ctx.moveTo(x + 16, y);
+            ctx.lineTo(x + 2, y);
+            ctx.moveTo(x + 6, y - 5);
+            ctx.lineTo(x + 2, y);
+            ctx.lineTo(x + 6, y + 5);
+        } else {
+            ctx.moveTo(x - 16, y);
+            ctx.lineTo(x - 2, y);
+            ctx.moveTo(x - 6, y - 5);
+            ctx.lineTo(x - 2, y);
+            ctx.lineTo(x - 6, y + 5);
+        }
+        ctx.stroke();
+    };
+    if (Number.isFinite(exec.entryPrice)) drawArrow(xAt(entryTime), yAt(exec.entryPrice), false);
+    if (Number.isFinite(exec.exitPrice)) drawArrow(xAt(exitTime), yAt(exec.exitPrice), true);
+}
+
+async function loadDayTradeSnippet(canvas, trade) {
+    const wrap = canvas.parentElement;
+    if (wrap) wrap.classList.add('day-trade-snippet--loading');
+    let candles = buildSimulatedSnippetCandles(trade);
+    try {
+        const ticker = extractBaseTicker(trade.symbol);
+        const raw = await fetchYahooMarketCandles(ticker, trade.date);
+        const filtered = filterSnippetCandles(raw, trade);
+        if (filtered.length >= 8) candles = resampleCandles(filtered, 5);
+    } catch (e) { /* simulated fallback */ }
+    drawDayTradeSnippetCanvas(canvas, trade, candles);
+    if (wrap) wrap.classList.remove('day-trade-snippet--loading');
+}
+
+function initDayTradeSnippets(dayTrades) {
+    document.querySelectorAll('.day-trade-snippet').forEach(wrap => {
+        const tradeId = wrap.dataset.tradeId;
+        const trade = dayTrades.find(t => t.id === tradeId);
+        if (!trade) return;
+        wrap.innerHTML = '';
+        const canvas = document.createElement('canvas');
+        canvas.className = 'day-trade-snippet-canvas';
+        canvas.height = 150;
+        wrap.appendChild(canvas);
+        loadDayTradeSnippet(canvas, trade);
+        if (typeof ResizeObserver !== 'undefined') {
+            const obs = new ResizeObserver(() => {
+                if (canvas._snippetData) {
+                    drawDayTradeSnippetCanvas(canvas, canvas._snippetData.trade, canvas._snippetData.candles);
+                }
+            });
+            obs.observe(wrap);
+        }
+    });
+}
+
+function renderTradingDayPicker(panel, viewDate, onDateSelect) {
     if (!panel) return;
 
     const [vy, vm] = viewDate.split('-').map(Number);
@@ -5678,13 +6208,47 @@ function renderDayViewMiniCalendar(viewDate) {
             render();
         });
         panel.querySelectorAll('.day-pick-cell[data-date]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                window.location.href = `day-view.html?date=${btn.dataset.date}`;
-            });
+            btn.addEventListener('click', () => onDateSelect(btn.dataset.date));
         });
     };
 
     render();
+}
+
+function renderDayViewMiniCalendar(viewDate) {
+    const panel = document.getElementById('dayMiniCalendarPanel');
+    if (!panel) return;
+    renderTradingDayPicker(panel, viewDate, (ds) => {
+        window.location.href = `day-view.html?date=${ds}`;
+    });
+}
+
+function selectReplayDate(viewDate) {
+    replayState.selectedDate = viewDate;
+    replayState.selectedTradeId = null;
+    replayState.selectedTrade = null;
+    pauseReplay();
+    renderReplayDateCalendar(viewDate);
+    renderReplayTradeList();
+    renderReplayExecutions(null);
+    renderReplayTradeDetails(null);
+    updateReplaySideHeader(null);
+    const dayTrades = getTradesForReplayDate(viewDate);
+    if (dayTrades.length) loadReplayTrade(dayTrades[0]);
+    else {
+        replayState.preCandles = [];
+        replayState.tradeCandles = [];
+        replayState.series?.setData([]);
+        updateReplayOhlc(null);
+        document.getElementById('replayChartTitle').textContent = 'No trades this day';
+        document.getElementById('replayChartPnl').textContent = '—';
+    }
+}
+
+function renderReplayDateCalendar(viewDate) {
+    const panel = document.getElementById('replayDateCalendar');
+    if (!panel) return;
+    renderTradingDayPicker(panel, viewDate, selectReplayDate);
 }
 
 function initDayView() {
@@ -5834,7 +6398,18 @@ function initDayView() {
                 }
 
                 bodyContent += `</div>`;
-                card.innerHTML = cardHeader + bodyContent;
+
+                const snippetBlock = `
+                    <div class="day-trade-snippet-wrap">
+                        <div class="day-trade-snippet-head">
+                            <span>Trade chart</span>
+                            <a href="trade-replay.html" class="day-trade-snippet-link">Open in replay →</a>
+                        </div>
+                        <div class="day-trade-snippet" data-trade-id="${t.id}"></div>
+                    </div>
+                `;
+
+                card.innerHTML = cardHeader + snippetBlock + bodyContent;
                 
                 // Attach button listeners
                 const editBtn = card.querySelector('.edit-analysis-btn');
@@ -5856,6 +6431,7 @@ function initDayView() {
 
                 detailsSection.appendChild(card);
             });
+            initDayTradeSnippets(dayTrades);
         } else {
             detailsSection.innerHTML = '<p class="day-empty-msg">No trades logged for this day. Pick a trading day on the calendar.</p>';
         }

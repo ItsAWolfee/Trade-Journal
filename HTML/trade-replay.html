@@ -46,8 +46,8 @@
                 <div class="replay-panel-pane replay-panel-pane--active" data-replay-pane="trades">
                     <div class="replay-pane-head">
                         <span class="replay-pane-title">Playback</span>
-                        <select id="replayDatePicker" class="replay-date-select" aria-label="Select replay date"></select>
                     </div>
+                    <div id="replayDateCalendar" class="replay-date-calendar day-picker-panel" aria-label="Select replay date"></div>
                     <div id="replayTradeList" class="replay-trade-list"></div>
                 </div>
 
@@ -83,10 +83,10 @@
                 <div class="replay-chart-toolbar">
                     <div class="replay-toolbar-left">
                         <span class="replay-toolbar-symbol" id="replayChartTitle">Select a trade</span>
-                        <div class="replay-interval-pills" id="replayIntervalPills">
-                            <button type="button" class="replay-pill replay-pill--active" data-interval="1">1m</button>
-                            <button type="button" class="replay-pill" data-interval="3">3m</button>
-                            <button type="button" class="replay-pill" data-interval="5">5m</button>
+                        <div class="replay-interval-pills" id="replayIntervalPills" hidden>
+                            <button type="button" class="replay-pill" data-replay-interval="1">1m</button>
+                            <button type="button" class="replay-pill" data-replay-interval="3">3m</button>
+                            <button type="button" class="replay-pill replay-pill--active" data-replay-interval="5">5m</button>
                         </div>
                         <span class="replay-data-badge" id="replayDataBadge"></span>
                     </div>
@@ -102,9 +102,29 @@
                     </div>
                 </div>
 
+                <div id="replayDrawStyleBar" class="replay-draw-style-bar" hidden>
+                    <div class="replay-style-colors" id="replayStyleColors"></div>
+                    <div class="replay-style-widths">
+                        <button type="button" class="replay-style-width" data-width="1">1px</button>
+                        <button type="button" class="replay-style-width replay-style-width--active" data-width="2">2px</button>
+                        <button type="button" class="replay-style-width" data-width="3">3px</button>
+                    </div>
+                    <label class="replay-style-opacity">
+                        <span>Opacity</span>
+                        <input type="range" id="replayStyleOpacity" min="20" max="100" value="100">
+                        <span id="replayStyleOpacityVal">100%</span>
+                    </label>
+                </div>
+
                 <div class="replay-chart-area">
                     <nav class="replay-draw-rail" id="replayDrawRail" aria-label="Drawing tools">
-                        <button type="button" class="replay-draw-btn replay-draw-btn--active" data-draw-tool="crosshair" title="Crosshair">
+                        <div class="replay-draw-intervals" aria-label="Chart interval">
+                            <button type="button" class="replay-draw-interval" data-replay-interval="1" title="1 minute">1m</button>
+                            <button type="button" class="replay-draw-interval" data-replay-interval="3" title="3 minutes">3m</button>
+                            <button type="button" class="replay-draw-interval replay-draw-interval--active" data-replay-interval="5" title="5 minutes">5m</button>
+                        </div>
+                        <div class="replay-draw-divider"></div>
+                        <button type="button" class="replay-draw-btn replay-draw-btn--active" data-draw-tool="crosshair" title="Crosshair (pan chart)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M2 12h20" stroke-dasharray="3 3"/></svg>
                         </button>
                         <button type="button" class="replay-draw-btn" data-draw-tool="trendline" title="Trend line">
@@ -113,11 +133,14 @@
                         <button type="button" class="replay-draw-btn" data-draw-tool="hline" title="Horizontal line">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12h16"/><circle cx="6" cy="12" r="1.5" fill="currentColor"/><circle cx="18" cy="12" r="1.5" fill="currentColor"/></svg>
                         </button>
-                        <button type="button" class="replay-draw-btn" data-draw-tool="levels" title="Move PM/PD levels">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h16M4 16h16"/><path d="M8 6v4M16 14v4"/></svg>
-                        </button>
                         <button type="button" class="replay-draw-btn" data-draw-tool="measure" title="Measure">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17 17 3"/><path d="m14 6 4 4"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" data-draw-tool="text" title="Text label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V4h16v3M12 4v16M8 20h8"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" data-draw-tool="brush" title="Freehand brush">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 18 6-6-3-3-6 6v3h3Z"/><path d="M14 7l3 3"/></svg>
                         </button>
                         <div class="replay-draw-divider"></div>
                         <button type="button" class="replay-draw-btn" id="replayZoomInBtn" title="Zoom in">
@@ -136,6 +159,12 @@
                         <button type="button" class="replay-draw-btn" id="replayHideLevelsBtn" title="Hide/show levels">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
                         </button>
+                        <button type="button" class="replay-draw-btn" id="replayUndoBtn" title="Undo (Ctrl+Z)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14H4V9"/><path d="M4 14c2.5-4 7-6 11-4.5"/></svg>
+                        </button>
+                        <button type="button" class="replay-draw-btn" id="replayRedoBtn" title="Redo (Ctrl+Shift+Z)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 14h5V9"/><path d="M20 14c-2.5-4-7-6-11-4.5"/></svg>
+                        </button>
                         <button type="button" class="replay-draw-btn" id="replayClearDrawBtn" title="Remove drawings">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
                         </button>
@@ -145,6 +174,8 @@
                         <div id="replaySessionOverlay" class="replay-session-overlay" aria-hidden="true"></div>
                         <div id="replayExecOverlay" class="replay-exec-overlay" aria-hidden="true"></div>
                         <div id="replayLevelHandles" class="replay-level-handles" aria-hidden="true"></div>
+                        <canvas id="replayBrushCanvas" class="replay-brush-canvas" aria-hidden="true"></canvas>
+                        <div id="replayTextLayer" class="replay-text-layer" aria-hidden="true"></div>
                         <div id="replayMeasureLabel" class="replay-measure-label" hidden></div>
                         <div id="replayChartStatus" class="replay-chart-status" hidden></div>
                     </div>
@@ -181,7 +212,7 @@
         </div>
     </main>
 
-    <script src="../JS/trade_logic.js?v=sync24"></script>
+    <script src="../JS/trade_logic.js?v=sync29"></script>
     <div id="notificationModal" class="notification-modal">
         <div class="notification-content">
             <div id="notificationIcon" class="notification-icon">
