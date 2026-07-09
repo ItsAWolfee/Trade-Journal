@@ -295,7 +295,7 @@ body {
 
 /* Rich dashboard stat cards (TradeZella-style) */
 .stats-grid--rich {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
 }
 
 .stat-card-rich:last-child .stat-gauge-col {
@@ -2204,7 +2204,7 @@ body {
     }
 
     .stats-grid--rich {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 
@@ -3393,6 +3393,32 @@ input[type="range"]::-webkit-slider-thumb:hover {
     top: 0;
 }
 
+.filter-date-btn--picker {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.filter-date-overlay-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: none;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 2;
+    color-scheme: dark;
+}
+
+.filter-date-btn--picker svg {
+    pointer-events: none;
+    position: relative;
+    z-index: 1;
+}
+
 .filter-date-btn {
     display: flex;
     align-items: center;
@@ -3678,6 +3704,83 @@ input[type="range"]::-webkit-slider-thumb:hover {
     color: var(--text-muted);
     font-size: 0.8rem;
     margin-top: 2px;
+}
+
+.settings-balance-preview {
+    font-size: 1.35rem;
+    font-weight: 800;
+    padding: 0.65rem 0.85rem;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border);
+}
+
+.settings-deposit-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.settings-deposit-date-field {
+    grid-column: 1 / -1;
+}
+
+.settings-deposit-form input:last-child {
+    grid-column: 1 / -1;
+}
+
+.settings-deposits-list {
+    margin-top: 0.5rem;
+}
+
+.settings-deposits-empty {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    padding: 0.5rem 0;
+}
+
+.settings-deposits-head,
+.settings-deposit-row {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr 1.4fr 28px;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.8rem;
+}
+
+.settings-deposits-head {
+    color: var(--text-muted);
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-deposit-row {
+    padding: 0.45rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.settings-deposit-note {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.settings-deposit-remove {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(255, 77, 109, 0.12);
+    color: var(--loss-red);
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+}
+
+.settings-deposit-remove:hover {
+    background: rgba(255, 77, 109, 0.22);
 }
 
 /* Toggle switch */

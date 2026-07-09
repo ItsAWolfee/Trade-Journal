@@ -39,13 +39,95 @@ function saveTrades() {
     localStorage.setItem('tradeJournalData', JSON.stringify(trades));
 }
 
+const ACCOUNT_DEPOSITS_KEY = 'tradeJournalDeposits';
+
+function getDeposits() {
+    try {
+        const list = JSON.parse(localStorage.getItem(ACCOUNT_DEPOSITS_KEY) || '[]');
+        return Array.isArray(list) ? list : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveDeposits(list) {
+    localStorage.setItem(ACCOUNT_DEPOSITS_KEY, JSON.stringify(list));
+}
+
+function addDeposit({ date, amount, note }) {
+    const amt = parseFloat(amount);
+    if (!date || !Number.isFinite(amt) || amt === 0) {
+        throw new Error('Enter a valid date and non-zero amount.');
+    }
+    const deposits = getDeposits();
+    deposits.push({
+        id: Date.now() + Math.random().toString(36).slice(2, 9),
+        date,
+        amount: amt,
+        note: (note || '').trim()
+    });
+    deposits.sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
+    saveDeposits(deposits);
+    return deposits;
+}
+
+function removeDeposit(id) {
+    saveDeposits(getDeposits().filter(d => d.id !== id));
+}
+
+function getTotalDeposits(upToDate = null) {
+    return getDeposits()
+        .filter(d => d.date && (!upToDate || d.date <= upToDate))
+        .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+}
+
+function getNetProfitUpTo(dateStr) {
+    return sumNetProfit(trades.filter(t => t.date && t.date <= dateStr));
+}
+
+function getAccountBalance(upToDate = null) {
+    if (upToDate) return getTotalDeposits(upToDate) + getNetProfitUpTo(upToDate);
+    return getTotalDeposits() + sumNetProfit(trades);
+}
+
+function getAccountBalanceSeries() {
+    const depositByDate = {};
+    getDeposits().forEach(d => {
+        if (!d.date) return;
+        depositByDate[d.date] = (depositByDate[d.date] || 0) + (Number(d.amount) || 0);
+    });
+    const dailyPnl = getDailyPnLSeries();
+    const pnlByDate = Object.fromEntries(dailyPnl.map(d => [d.date, d.pnl]));
+    const allDates = new Set([
+        ...Object.keys(depositByDate),
+        ...dailyPnl.map(d => d.date)
+    ]);
+    let runningDeposits = 0;
+    let runningPnl = 0;
+    return [...allDates].sort().map(date => {
+        const dayDeposit = depositByDate[date] || 0;
+        const dayPnl = pnlByDate[date] || 0;
+        runningDeposits += dayDeposit;
+        runningPnl += dayPnl;
+        return {
+            date,
+            dayDeposit,
+            dayPnl,
+            deposits: runningDeposits,
+            pnl: runningPnl,
+            balance: runningDeposits + runningPnl
+        };
+    });
+}
+
 function getJournalBackupPayload() {
     return {
         version: 1,
         exportedAt: new Date().toISOString(),
         trades: JSON.parse(localStorage.getItem('tradeJournalData') || '[]'),
         watchlist: JSON.parse(localStorage.getItem('tradeJournalWatchlist') || 'null'),
-        tradingNotes: localStorage.getItem('tradingNotes') || ''
+        tradingNotes: localStorage.getItem('tradingNotes') || '',
+        deposits: getDeposits()
     };
 }
 
@@ -65,6 +147,9 @@ function applyJournalBackup(payload) {
     }
     if (payload.tradingNotes) {
         localStorage.setItem('tradingNotes', payload.tradingNotes);
+    }
+    if (Array.isArray(payload.deposits)) {
+        saveDeposits(payload.deposits);
     }
 
     syncStocklistDatalists();
@@ -152,6 +237,7 @@ function applyRemoteJournalPayload(payload, stamp, render = true) {
     localStorage.setItem('tradeJournalData', JSON.stringify(trades));
     if (payload.watchlist) localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
     if (typeof payload.tradingNotes === 'string') localStorage.setItem('tradingNotes', payload.tradingNotes);
+    if (Array.isArray(payload.deposits)) saveDeposits(payload.deposits);
     if (stamp) localStorage.setItem(SYNC_MARKER_KEY, stamp);
     if (render) {
         syncStocklistDatalists();
@@ -697,14 +783,45 @@ function renderDonutGauge(el, grossProfit, grossLoss) {
     </svg>`;
 }
 
-function updateDashboardStats() {
-    const totalFees = sumFees(trades);
-    const totalNetPL = sumNetProfit(trades);
-    const totalTrades = trades.length;
+function ensureAccountBalanceStatCard() {
+    const grid = document.querySelector('.stats-grid--rich');
+    if (!grid || document.getElementById('accountBalanceValue')) return;
+    const card = document.createElement('div');
+    card.className = 'stat-card stat-card-rich stat-card-rich--balance';
+    card.innerHTML = `
+        <div class="stat-rich-top">
+            <span class="stat-label">Account balance <span class="stat-info" data-tooltip="Deposits plus net trading P/L. Add deposits in Settings.">ⓘ</span></span>
+        </div>
+        <div class="stat-rich-main">
+            <span class="stat-value" id="accountBalanceValue">$0.00</span>
+        </div>
+        <span class="stat-sub" id="accountBalanceSub">$0.00 deposited</span>
+    `;
+    grid.insertBefore(card, grid.firstChild);
+}
 
-    const winningTrades = trades.filter(t => getNetProfit(t) > 0);
-    const losingTrades = trades.filter(t => getNetProfit(t) < 0);
-    const evenTrades = trades.filter(t => getNetProfit(t) === 0);
+function updateDashboardStats() {
+    ensureAccountBalanceStatCard();
+
+    let statsTrades = trades;
+    let balanceAsOf = null;
+    if (document.getElementById('dayTradeDetails')) {
+        const viewDate = new URLSearchParams(window.location.search).get('date');
+        if (viewDate) {
+            statsTrades = trades.filter(t => t.date === viewDate);
+            balanceAsOf = viewDate;
+        }
+    }
+
+    const totalFees = sumFees(statsTrades);
+    const totalNetPL = sumNetProfit(statsTrades);
+    const totalTrades = statsTrades.length;
+    const accountBalance = getAccountBalance(balanceAsOf);
+    const totalDeposits = getTotalDeposits(balanceAsOf);
+
+    const winningTrades = statsTrades.filter(t => getNetProfit(t) > 0);
+    const losingTrades = statsTrades.filter(t => getNetProfit(t) < 0);
+    const evenTrades = statsTrades.filter(t => getNetProfit(t) === 0);
     const wins = winningTrades.length;
     const losses = losingTrades.length;
     const even = evenTrades.length;
@@ -723,6 +840,8 @@ function updateDashboardStats() {
     // Update UI elements
     const netPLElem = document.getElementById('totalNetPL');
     const netPlCount = document.getElementById('netPlTradeCount');
+    const balanceElem = document.getElementById('accountBalanceValue');
+    const balanceSub = document.getElementById('accountBalanceSub');
     const winRateElem = document.getElementById('winRateDisplay');
     const pfElem = document.getElementById('profitFactorDisplay');
     const feesSub = document.getElementById('totalFeesSub');
@@ -731,8 +850,16 @@ function updateDashboardStats() {
         netPLElem.textContent = formatSignedMoney(totalNetPL);
         netPLElem.style.color = profitColor(totalNetPL);
     }
+    if (balanceElem) {
+        balanceElem.textContent = formatSignedMoney(accountBalance);
+        balanceElem.style.color = profitColor(accountBalance - totalDeposits);
+    }
+    if (balanceSub) {
+        const depLabel = balanceAsOf ? `Deposits through ${formatTradeDate(balanceAsOf)}` : 'Total deposited';
+        balanceSub.textContent = `${depLabel}: ${formatSignedMoney(totalDeposits)} · P/L: ${formatSignedMoney(totalNetPL)}`;
+    }
     if (netPlCount) netPlCount.textContent = totalTrades;
-    if (feesSub) feesSub.textContent = formatFeesLabel(trades);
+    if (feesSub) feesSub.textContent = formatFeesLabel(statsTrades);
     if (winRateElem) winRateElem.textContent = `${winRate}%`;
 
     renderSemiGauge(document.getElementById('tradeWinGauge'), wins, losses, even);
@@ -1005,6 +1132,19 @@ function formatChartDate(dateStr) {
 }
 
 function computeMaxDrawdown(dailySeries) {
+    const balanceSeries = getAccountBalanceSeries();
+    if (!balanceSeries.length) return computeMaxDrawdownFromPnl(dailySeries);
+    let peak = 0;
+    let maxDD = 0;
+    balanceSeries.forEach(({ balance }) => {
+        if (balance > peak) peak = balance;
+        const dd = peak - balance;
+        if (dd > maxDD) maxDD = dd;
+    });
+    return maxDD;
+}
+
+function computeMaxDrawdownFromPnl(dailySeries) {
     let peak = 0;
     let cum = 0;
     let maxDD = 0;
@@ -1096,12 +1236,18 @@ function destroyChartInstance(chart) {
 
 function initPerformanceCharts() {
     const metrics = computeScoreMetrics();
+    const balanceSeries = getAccountBalanceSeries();
     const dailySeries = getDailyPnLSeries();
-    const dates = dailySeries.map(d => formatChartDate(d.date));
+    const dates = balanceSeries.length
+        ? balanceSeries.map(d => formatChartDate(d.date))
+        : dailySeries.map(d => formatChartDate(d.date));
+    const cumulativeBalances = balanceSeries.length
+        ? balanceSeries.map(d => d.balance)
+        : (() => {
+            let running = 0;
+            return dailySeries.map(d => { running += d.pnl; return running; });
+        })();
     const dailyPnls = dailySeries.map(d => d.pnl);
-
-    let running = 0;
-    const cumulativePnls = dailyPnls.map(p => { running += p; return running; });
 
     const overallEl = document.getElementById('overallScoreDisplay');
     const markerEl = document.getElementById('scoreMeterMarker');
@@ -1186,9 +1332,9 @@ function initPerformanceCharts() {
             data: {
                 labels: dates,
                 datasets: [{
-                    label: 'Cumulative P/L',
-                    data: cumulativePnls,
-                    dayData: dailySeries,
+                    label: 'Account balance',
+                    data: cumulativeBalances,
+                    balanceData: balanceSeries,
                     borderColor: '#00f0a8',
                     backgroundColor: zeroAnchoredGradient,
                     fill: 'origin',
@@ -1233,9 +1379,13 @@ function initPerformanceCharts() {
                         callbacks: {
                             title: (items) => items[0].label,
                             label: (ctx) => {
-                                const day = dailySeries[ctx.dataIndex];
-                                const lines = [`Total: ${formatSignedMoney(ctx.parsed.y)}`];
-                                if (day) lines.push(`Day: ${formatMoneyWithSign(day.pnl)}`);
+                                const day = balanceSeries[ctx.dataIndex] || dailySeries[ctx.dataIndex];
+                                const lines = [`Balance: ${formatSignedMoney(ctx.parsed.y)}`];
+                                if (day) {
+                                    if (day.dayPnl != null) lines.push(`Day P/L: ${formatMoneyWithSign(day.dayPnl)}`);
+                                    if (day.dayDeposit) lines.push(`Deposit: ${formatMoneyWithSign(day.dayDeposit)}`);
+                                    else if (day.pnl != null && day.dayPnl == null) lines.push(`Day: ${formatMoneyWithSign(day.pnl)}`);
+                                }
                                 return lines;
                             }
                         }
@@ -1306,6 +1456,14 @@ function initPerformanceCharts() {
 
 // Drawdown over time (distance below equity peak)
 function getDrawdownSeries() {
+    const balanceSeries = getAccountBalanceSeries();
+    if (balanceSeries.length) {
+        let peak = 0;
+        return balanceSeries.map(({ date, balance }) => {
+            if (balance > peak) peak = balance;
+            return { date, drawdown: balance - peak };
+        });
+    }
     const dailySeries = getDailyPnLSeries();
     let peak = 0;
     let cum = 0;
@@ -1861,6 +2019,10 @@ applySavedTheme();
 // ---- Settings modal (built on demand, works on every page) ----
 function openSettings() {
     let modal = document.getElementById('settingsModal');
+    if (modal && !modal.querySelector('.filter-date-overlay-input')) {
+        modal.remove();
+        modal = null;
+    }
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'settingsModal';
@@ -1888,6 +2050,36 @@ function openSettings() {
                         <input type="password" id="settingsOpenAIKey" class="settings-token-input" placeholder="sk-..." autocomplete="off">
                         <button type="button" class="data-backup-btn" style="width:100%;" onclick="saveOpenAIKeyFromSettings()">Save API key</button>
                     </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-label">Account balance</div>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">Current balance</div>
+                            <div class="settings-row-sub">Deposits + net trading P/L. Record funding with a date so charts line up.</div>
+                        </div>
+                        <div class="settings-balance-preview" id="settingsBalancePreview">$0.00</div>
+                    </div>
+                    <div class="settings-row settings-row--stack">
+                        <div>
+                            <div class="settings-row-title">Add deposit or withdrawal</div>
+                            <div class="settings-row-sub">Use a positive amount for deposits, negative to withdraw.</div>
+                        </div>
+                        <div class="settings-deposit-form">
+                            <div class="settings-deposit-date-field filter-date-field">
+                                <span class="filter-date-display" id="settingsDepositDateDisplay">Pick date</span>
+                                <label class="filter-date-btn filter-date-btn--picker" aria-label="Open deposit date calendar">
+                                    <input type="date" id="settingsDepositDate" class="filter-date-overlay-input" aria-label="Deposit date">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+                                </label>
+                            </div>
+                            <input type="number" id="settingsDepositAmount" class="settings-token-input" step="0.01" placeholder="Amount (e.g. 5000)">
+                            <input type="text" id="settingsDepositNote" class="settings-token-input" placeholder="Note (optional)">
+                        </div>
+                        <button type="button" class="data-backup-btn" style="width:100%;" onclick="addDepositFromSettings()">Save entry</button>
+                    </div>
+                    <div id="settingsDepositsList" class="settings-deposits-list"></div>
                 </div>
 
                 <div class="settings-section">
@@ -1963,6 +2155,7 @@ function openSettings() {
         `;
         modal.addEventListener('click', (e) => { if (e.target === modal) closeSettings(); });
         document.body.appendChild(modal);
+        initSettingsDepositDateUI();
     }
     const toggle = modal.querySelector('#settingsThemeToggle');
     if (toggle) toggle.checked = (localStorage.getItem('tradeJournalTheme') || 'dark') === 'light';
@@ -1984,8 +2177,97 @@ function openSettings() {
     if (contractsInput) contractsInput.value = getDefaultContracts();
     const compactToggle = modal.querySelector('#settingsCompactTable');
     if (compactToggle) compactToggle.checked = isCompactTable();
+    const depositDate = modal.querySelector('#settingsDepositDate');
+    if (depositDate && !depositDate.value) {
+        depositDate.value = new Date().toISOString().slice(0, 10);
+    }
+    updateSettingsDepositDateDisplay();
+    renderDepositsList();
+    const balancePreview = modal.querySelector('#settingsBalancePreview');
+    if (balancePreview) {
+        balancePreview.textContent = formatSignedMoney(getAccountBalance());
+        balancePreview.style.color = profitColor(getAccountBalance() - getTotalDeposits());
+    }
     modal.style.display = 'flex';
 }
+
+function updateSettingsDepositDateDisplay() {
+    const input = document.getElementById('settingsDepositDate');
+    const display = document.getElementById('settingsDepositDateDisplay');
+    if (!display) return;
+    if (input?.value) {
+        display.textContent = formatTradeDate(input.value);
+        display.classList.add('has-value');
+    } else {
+        display.textContent = 'Pick date';
+        display.classList.remove('has-value');
+    }
+}
+
+function initSettingsDepositDateUI() {
+    const input = document.getElementById('settingsDepositDate');
+    if (!input || input.dataset.bound === '1') return;
+    input.dataset.bound = '1';
+    input.addEventListener('change', updateSettingsDepositDateDisplay);
+    input.addEventListener('input', updateSettingsDepositDateDisplay);
+}
+
+function renderDepositsList() {
+    const list = document.getElementById('settingsDepositsList');
+    if (!list) return;
+    const deposits = getDeposits();
+    if (!deposits.length) {
+        list.innerHTML = '<p class="settings-deposits-empty">No deposits yet. Add your starting balance above.</p>';
+        return;
+    }
+    list.innerHTML = `
+        <div class="settings-deposits-head">
+            <span>Date</span><span>Amount</span><span>Note</span><span></span>
+        </div>
+        ${deposits.map(d => `
+            <div class="settings-deposit-row">
+                <span>${formatTradeDate(d.date)}</span>
+                <span style="color:${profitColor(d.amount)}">${formatSignedMoney(d.amount)}</span>
+                <span class="settings-deposit-note">${escapeHtml(d.note || '—')}</span>
+                <button type="button" class="settings-deposit-remove" onclick="removeDepositFromSettings('${d.id}')" title="Remove">×</button>
+            </div>
+        `).join('')}
+    `;
+}
+
+window.addDepositFromSettings = function addDepositFromSettings() {
+    const date = document.getElementById('settingsDepositDate')?.value;
+    const amount = document.getElementById('settingsDepositAmount')?.value;
+    const note = document.getElementById('settingsDepositNote')?.value;
+    try {
+        addDeposit({ date, amount, note });
+        const amountInput = document.getElementById('settingsDepositAmount');
+        const noteInput = document.getElementById('settingsDepositNote');
+        if (amountInput) amountInput.value = '';
+        if (noteInput) noteInput.value = '';
+        renderDepositsList();
+        const balancePreview = document.getElementById('settingsBalancePreview');
+        if (balancePreview) {
+            balancePreview.textContent = formatSignedMoney(getAccountBalance());
+            balancePreview.style.color = profitColor(getAccountBalance() - getTotalDeposits());
+        }
+        refreshAllViews();
+        showAlert('Balance entry saved.', 'Saved');
+    } catch (err) {
+        showAlert(err.message || 'Could not save entry.', 'Invalid entry');
+    }
+};
+
+window.removeDepositFromSettings = function removeDepositFromSettings(id) {
+    removeDeposit(id);
+    renderDepositsList();
+    const balancePreview = document.getElementById('settingsBalancePreview');
+    if (balancePreview) {
+        balancePreview.textContent = formatSignedMoney(getAccountBalance());
+        balancePreview.style.color = profitColor(getAccountBalance() - getTotalDeposits());
+    }
+    refreshAllViews();
+};
 
 function saveTosFeeFromSettings() {
     const input = document.getElementById('settingsTosFee');
@@ -3642,18 +3924,7 @@ function initTradeFilterUI() {
             updateFilterDateDisplay();
             applyTradeFilters();
         });
-    });
-
-    panel.querySelectorAll('.filter-date-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const input = document.getElementById(btn.dataset.for);
-            if (!input) return;
-            if (typeof input.showPicker === 'function') {
-                try { input.showPicker(); } catch (_) { /* ignore */ }
-            }
-        });
+        input.addEventListener('input', updateFilterDateDisplay);
     });
 
     updateFilterDateDisplay();
@@ -6509,20 +6780,28 @@ function initReports() {
     const equityCtx = document.getElementById('equityCurveChart');
     if (!equityCtx) return;
 
-    // Calculate cumulative equity
-    let cumulative = 0;
-    const sortedByDate = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
-    const equityData = sortedByDate.map(t => {
-        cumulative += getNetProfit(t);
-        return cumulative;
-    });
+    const balanceSeries = getAccountBalanceSeries();
+    let labels;
+    let equityData;
+    if (balanceSeries.length) {
+        labels = balanceSeries.map(d => d.date);
+        equityData = balanceSeries.map(d => d.balance);
+    } else {
+        let cumulative = 0;
+        const sortedByDate = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
+        labels = sortedByDate.map(t => t.date);
+        equityData = sortedByDate.map(t => {
+            cumulative += getNetProfit(t);
+            return cumulative;
+        });
+    }
 
     new Chart(equityCtx.getContext('2d'), {
         type: 'line',
         data: {
-            labels: sortedByDate.map(t => t.date),
+            labels,
             datasets: [{
-                label: 'Cumulative Equity',
+                label: 'Account balance',
                 data: equityData.length > 0 ? equityData : [0],
                 borderColor: '#7b61ff',
                 backgroundColor: 'rgba(123, 97, 255, 0.1)',
