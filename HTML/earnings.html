@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Earnings - TradeJournal</title>
+    <link rel="stylesheet" href="../CSS/trade.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="dashboard-body earnings-page">
+    <aside class="sidebar"></aside>
+
+    <main class="main-content">
+        <header class="top-header">
+            <div class="welcome-text">
+                <h1>Earnings</h1>
+                <p>Projected salary from your edge — and goals that advance when you hit them.</p>
+            </div>
+        </header>
+
+        <div id="earningsLevelUp" class="earnings-levelup" hidden>
+            <div class="earnings-levelup-card">
+                <div class="earnings-levelup-badge">GOAL HIT</div>
+                <h2 id="earningsLevelUpTitle">Goal crushed!</h2>
+                <p id="earningsLevelUpMsg"></p>
+                <button type="button" class="btn-primary" id="earningsLevelUpDismiss">Keep going →</button>
+            </div>
+        </div>
+
+        <section class="earnings-salary-grid">
+            <div class="earnings-salary-card">
+                <span class="earnings-salary-label">Est. daily</span>
+                <span class="earnings-salary-value" id="earnDaily">$0</span>
+                <span class="earnings-salary-sub">per trading day</span>
+            </div>
+            <div class="earnings-salary-card">
+                <span class="earnings-salary-label">Est. weekly</span>
+                <span class="earnings-salary-value" id="earnWeekly">$0</span>
+                <span class="earnings-salary-sub">× 5 trading days</span>
+            </div>
+            <div class="earnings-salary-card earnings-salary-card--accent">
+                <span class="earnings-salary-label">Est. monthly</span>
+                <span class="earnings-salary-value" id="earnMonthly">$0</span>
+                <span class="earnings-salary-sub">× ~21 trading days</span>
+            </div>
+            <div class="earnings-salary-card">
+                <span class="earnings-salary-label">Est. yearly</span>
+                <span class="earnings-salary-value" id="earnYearly">$0</span>
+                <span class="earnings-salary-sub">× ~252 trading days</span>
+            </div>
+        </section>
+
+        <p class="earnings-footnote" id="earnSalaryNote">Based on your average net P/L per trading day so far.</p>
+
+        <div class="earnings-main-grid">
+            <section class="chart-container earnings-goals-panel">
+                <div class="chart-header-row">
+                    <h3>All-time goals</h3>
+                    <span class="stat-info" data-tooltip="Targets are set automatically from your all-time net P/L. Hit a milestone, then click the check to unlock the next one.">ⓘ</span>
+                </div>
+                <div class="earnings-goal-list" id="earnGoalList"></div>
+                <p class="earnings-footnote" id="earnGoalNote" style="margin:0;">Milestones auto-adjust as you grow — no setup needed.</p>
+            </section>
+
+            <section class="chart-container">
+                <div class="chart-header-row">
+                    <h3>All-time progress</h3>
+                </div>
+                <div class="earnings-month-hero">
+                    <div>
+                        <div class="earnings-month-label" id="earnMonthLabel">All-time net P/L</div>
+                        <div class="earnings-month-pl" id="earnMonthPl">$0</div>
+                        <div class="earnings-month-sub" id="earnMonthSub">of next milestone</div>
+                    </div>
+                    <div class="earnings-ring" id="earnMonthRing" aria-hidden="true"></div>
+                </div>
+                <div class="chart-content" style="height: 220px;">
+                    <canvas id="earnMonthPaceChart"></canvas>
+                </div>
+            </section>
+        </div>
+
+        <div class="earnings-stats-row">
+            <div class="stat-card">
+                <div class="stat-label">Trading days</div>
+                <div class="stat-value" id="earnTradingDays">0</div>
+                <div class="stat-sub" id="earnTradesSub">0 trades</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg / day</div>
+                <div class="stat-value" id="earnAvgDay">$0</div>
+                <div class="stat-sub">Net P/L average</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Best day</div>
+                <div class="stat-value" id="earnBestDay">$0</div>
+                <div class="stat-sub" id="earnBestDaySub">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Win rate</div>
+                <div class="stat-value" id="earnWinRate">0%</div>
+                <div class="stat-sub" id="earnWinLossSub">0W / 0L</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg win</div>
+                <div class="stat-value" id="earnAvgWin">$0</div>
+                <div class="stat-sub">Per winning trade</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg loss</div>
+                <div class="stat-value" id="earnAvgLoss">$0</div>
+                <div class="stat-sub">Per losing trade</div>
+            </div>
+        </div>
+
+        <section class="chart-container">
+            <div class="chart-header-row">
+                <h3>Earnings vs milestones</h3>
+                <span class="stat-info" data-tooltip="Monthly bars of your all-time journey. The dashed line is your current all-time milestone.">ⓘ</span>
+            </div>
+            <div class="chart-content" style="height: 280px;">
+                <canvas id="earnHistoryChart"></canvas>
+            </div>
+        </section>
+    </main>
+
+    <script src="../JS/trade_logic.js?v=sync35"></script>
+    <div id="notificationModal" class="notification-modal">
+        <div class="notification-content">
+            <div id="notificationIcon" class="notification-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            </div>
+            <h3 id="notificationTitle" class="notification-title">Notification</h3>
+            <p id="notificationMessage" class="notification-message"></p>
+            <div id="notificationButtons" class="notification-buttons">
+                <button id="notificationConfirm" class="notification-btn primary">OK</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

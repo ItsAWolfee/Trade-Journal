@@ -127,7 +127,8 @@ function getJournalBackupPayload() {
         trades: JSON.parse(localStorage.getItem('tradeJournalData') || '[]'),
         watchlist: JSON.parse(localStorage.getItem('tradeJournalWatchlist') || 'null'),
         tradingNotes: localStorage.getItem('tradingNotes') || '',
-        deposits: getDeposits()
+        deposits: getDeposits(),
+        earningsGoals: getEarningsGoals()
     };
 }
 
@@ -150,6 +151,9 @@ function applyJournalBackup(payload) {
     }
     if (Array.isArray(payload.deposits)) {
         saveDeposits(payload.deposits);
+    }
+    if (payload.earningsGoals && typeof payload.earningsGoals === 'object') {
+        saveEarningsGoals({ ...DEFAULT_EARNINGS_GOALS, ...payload.earningsGoals });
     }
 
     syncStocklistDatalists();
@@ -771,15 +775,19 @@ function renderDonutGauge(el, grossProfit, grossLoss) {
         return;
     }
     // Small gap between the two arcs so the split reads cleanly
-    const gap = total > 0 && grossProfit > 0 && grossLoss > 0 ? 2 : 0;
+    const gap = grossProfit > 0 && grossLoss > 0 ? 2 : 0;
     const gLen = Math.max((grossProfit / total) * circ - gap, 0);
     const rLen = Math.max((grossLoss / total) * circ - gap, 0);
+    // When MAX (no losses), skip the red arc — stroke-linecap="round" would still draw a tiny red dot at rLen=0
+    const redArc = rLen > 0
+        ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ff4d6d" stroke-width="8" stroke-linecap="round"
+            stroke-dasharray="${rLen} ${circ}" stroke-dashoffset="${-(grossProfit / total) * circ}" transform="rotate(-90 ${cx} ${cy})"/>`
+        : '';
     el.innerHTML = `<svg viewBox="0 0 52 52">
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="8"/>
         <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#00f0a8" stroke-width="8" stroke-linecap="round"
             stroke-dasharray="${gLen} ${circ}" stroke-dashoffset="0" transform="rotate(-90 ${cx} ${cy})"/>
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#ff4d6d" stroke-width="8" stroke-linecap="round"
-            stroke-dasharray="${rLen} ${circ}" stroke-dashoffset="${-(grossProfit / total) * circ}" transform="rotate(-90 ${cx} ${cy})"/>
+        ${redArc}
     </svg>`;
 }
 
@@ -983,15 +991,115 @@ function buildScatterPlugins(kind) {
                     const lines = [];
                     if (kind === 'time') lines.push(`Entered at ${raw.timeLabel || '—'}`);
                     if (kind === 'duration') lines.push(`Held for ${raw.durLabel || '—'}`);
+                    if (raw.date) lines.push(formatTradeDate(raw.date));
                     const y = raw.y || 0;
                     if (y > 0) lines.push(`Made ${formatMoney(y)}`);
                     else if (y < 0) lines.push(`Lost ${formatMoney(Math.abs(y))}`);
                     else lines.push('Broke even');
+                    lines.push('Click to open day →');
                     return lines;
                 }
             }
         }
     };
+}
+
+function percentile(sorted, p) {
+    if (!sorted.length) return 0;
+    if (sorted.length === 1) return sorted[0];
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
+function clusterAxisRange(values, { pad = 0.15, floorMin = null, ceilMax = null, showAll = false } = {}) {
+    const nums = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
+    if (!nums.length) return { min: floorMin ?? 0, max: ceilMax ?? 100, outlierCount: 0 };
+    const fullMin = nums[0];
+    const fullMax = nums[nums.length - 1];
+    if (showAll || nums.length < 4) {
+        const span = Math.max(Math.abs(fullMax), Math.abs(fullMin), 1);
+        const padAmt = span * pad;
+        return {
+            min: floorMin != null ? Math.min(floorMin, fullMin - padAmt) : fullMin - padAmt,
+            max: ceilMax != null ? Math.max(ceilMax, fullMax + padAmt) : fullMax + padAmt,
+            outlierCount: 0,
+            fullMin,
+            fullMax
+        };
+    }
+    const q1 = percentile(nums, 0.1);
+    const q9 = percentile(nums, 0.9);
+    const clusterSpan = Math.max(q9 - q1, Math.abs(q9), Math.abs(q1), 1);
+    const padAmt = clusterSpan * pad;
+    let min = q1 - padAmt;
+    let max = q9 + padAmt;
+    if (floorMin != null) min = Math.min(min, floorMin);
+    if (ceilMax != null) max = Math.max(max, ceilMax);
+    // Keep zero visible on P/L axes when cluster straddles or is near it
+    if (min > 0 && max > 0 && min < max * 0.35) min = 0;
+    if (min < 0 && max < 0 && max > min * 0.35) max = 0;
+    const outlierCount = nums.filter(v => v < min || v > max).length;
+    return { min, max, outlierCount, fullMin, fullMax };
+}
+
+function scatterJitter(seed, amount) {
+    let h = 0;
+    const s = String(seed || '');
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    const n = ((h % 1000) / 1000) * 2 - 1;
+    return n * amount;
+}
+
+function navigateScatterTrade(raw) {
+    if (!raw?.date) return;
+    window.location.href = `day-view.html?date=${raw.date}`;
+}
+
+function bindScatterClick(chart) {
+    if (!chart?.canvas || chart.canvas.dataset.scatterBound === '1') return;
+    chart.canvas.dataset.scatterBound = '1';
+    chart.canvas.style.cursor = 'default';
+    chart.canvas.addEventListener('mousemove', (evt) => {
+        const pts = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, false);
+        chart.canvas.style.cursor = pts.length ? 'pointer' : 'default';
+    });
+}
+
+let scatterShowAllOutliers = false;
+
+function updateScatterOutlierToggles(timeOutliers, durOutliers) {
+    const timeBtn = document.getElementById('timeScatterFitBtn');
+    const durBtn = document.getElementById('durationScatterFitBtn');
+    const label = scatterShowAllOutliers ? 'Focus cluster' : 'Show outliers';
+    if (timeBtn) {
+        timeBtn.hidden = !scatterShowAllOutliers && timeOutliers < 1;
+        timeBtn.textContent = label;
+        timeBtn.title = scatterShowAllOutliers
+            ? 'Zoom back to where most trades sit'
+            : `${timeOutliers} outlier${timeOutliers === 1 ? '' : 's'} outside view — click to expand`;
+    }
+    if (durBtn) {
+        durBtn.hidden = !scatterShowAllOutliers && durOutliers < 1;
+        durBtn.textContent = label;
+        durBtn.title = scatterShowAllOutliers
+            ? 'Zoom back to where most trades sit'
+            : `${durOutliers} outlier${durOutliers === 1 ? '' : 's'} outside view — click to expand`;
+    }
+}
+
+function initScatterFitButtons() {
+    ['timeScatterFitBtn', 'durationScatterFitBtn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn || btn.dataset.bound === '1') return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+            scatterShowAllOutliers = !scatterShowAllOutliers;
+            initCharts();
+        });
+    });
 }
 
 // Chart Initializations
@@ -1001,10 +1109,35 @@ let durationPerformanceChart = null;
 function initCharts() {
     const tradeExtremes = getTradeProfitExtremes();
     const list = trades || [];
+    initScatterFitButtons();
 
-    // Auto-scale the profit (y) axis to the biggest win/loss you've had
-    const maxProfitAbs = list.reduce((m, t) => Math.max(m, Math.abs(getNetProfit(t))), 0);
-    const yBound = niceAxisBound(maxProfitAbs * 1.1) || 100;
+    const pnls = list.map(t => getNetProfit(t));
+    const yFocus = clusterAxisRange(pnls, { pad: 0.2, showAll: scatterShowAllOutliers });
+    const maxAbsPnl = pnls.length ? Math.max(...pnls.map(Math.abs), 1) : 100;
+    const yBoundMin = yFocus.min < 0 && yFocus.max > 0 ? -Math.max(Math.abs(yFocus.min), yFocus.max) * 1.15 : yFocus.min;
+    const yBoundMax = yFocus.min < 0 && yFocus.max > 0 ? Math.max(Math.abs(yFocus.min), yFocus.max) * 1.15 : yFocus.max;
+    const yAxisMin = scatterShowAllOutliers ? -niceAxisBound(maxAbsPnl * 1.1) : Math.min(yBoundMin, -10);
+    const yAxisMax = scatterShowAllOutliers ? niceAxisBound(maxAbsPnl * 1.1) : Math.max(yBoundMax, 10);
+
+    const timePoints = list.map((t, i) => {
+        const baseX = timeToHours(t.time);
+        const baseY = getNetProfit(t);
+        return {
+            x: baseX + scatterJitter(t.id || `${t.date}-${i}-x`, 0.04),
+            y: baseY + scatterJitter(t.id || `${t.date}-${i}-y`, Math.max(Math.abs(yAxisMax - yAxisMin) * 0.008, 0.5)),
+            symbol: t.symbol,
+            timeLabel: formatTimeLabel(t.time),
+            date: t.date,
+            tradeId: t.id
+        };
+    });
+    const timeXs = timePoints.map(p => p.x);
+    const timeXFocus = clusterAxisRange(timeXs, {
+        pad: 0.08,
+        floorMin: 8.5,
+        ceilMax: 16.5,
+        showAll: scatterShowAllOutliers
+    });
 
     const timeCtx = document.getElementById('timePerformanceChart');
     if (timeCtx) {
@@ -1014,26 +1147,26 @@ function initCharts() {
             data: {
                 datasets: [{
                     label: 'P/L',
-                    data: list.map(t => ({
-                        x: timeToHours(t.time),
-                        y: getNetProfit(t),
-                        symbol: t.symbol,
-                        timeLabel: formatTimeLabel(t.time)
-                    })),
+                    data: timePoints,
                     backgroundColor: d => d.raw ? profitScatterColor(d.raw.y, tradeExtremes) : 'rgba(0,240,168,0.5)',
-                    pointRadius: d => d.raw ? profitPointRadius(d.raw.y, tradeExtremes) : 6
+                    pointRadius: d => d.raw ? profitPointRadius(d.raw.y, tradeExtremes) : 6,
+                    pointHoverRadius: 9
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                // Require the mouse to actually be over a dot (less sensitive)
-                interaction: { mode: 'point', intersect: true },
+                interaction: { mode: 'nearest', intersect: true },
+                onClick: (_evt, elements) => {
+                    if (!elements.length) return;
+                    navigateScatterTrade(timePerformanceChart.data.datasets[0].data[elements[0].index]);
+                },
                 scales: {
                     x: {
                         title: { display: true, text: 'Time of Day', color: '#8e8e93' },
                         grid: { color: 'rgba(255,255,255,0.05)' },
-                        min: 9, max: 12,
+                        min: Math.max(8, timeXFocus.min),
+                        max: Math.min(17, Math.max(timeXFocus.max, timeXFocus.min + 1)),
                         ticks: {
                             stepSize: 1,
                             callback: (v) => formatTimeLabel(`${Math.floor(v)}:00`)
@@ -1042,61 +1175,77 @@ function initCharts() {
                     y: {
                         title: { display: true, text: 'Profit / Loss ($)', color: '#8e8e93' },
                         grid: { color: 'rgba(255,255,255,0.05)' },
-                        min: -yBound, max: yBound,
+                        min: yAxisMin,
+                        max: yAxisMax,
                         ticks: { callback: (v) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString() }
                     }
                 },
                 plugins: buildScatterPlugins('time')
             }
         });
+        bindScatterClick(timePerformanceChart);
     }
 
     const durationCtx = document.getElementById('durationPerformanceChart');
+    let durOutliers = 0;
     if (durationCtx) {
         destroyChartInstance(durationPerformanceChart);
-        // Auto-scale the duration (x) axis to your longest trade
-        const maxDur = list.reduce((m, t) => Math.max(m, parseDurationMins(t)), 0);
-        const xBound = niceAxisBound(Math.max(maxDur, 5) * 1.1);
+        const durationPoints = list.map((t, i) => {
+            const mins = parseDurationMins(t);
+            const baseY = getNetProfit(t);
+            return {
+                x: Math.max(0, mins + scatterJitter(t.id || `${t.date}-${i}-dx`, Math.max(mins * 0.02, 0.35))),
+                y: baseY + scatterJitter(t.id || `${t.date}-${i}-dy`, Math.max(Math.abs(yAxisMax - yAxisMin) * 0.008, 0.5)),
+                symbol: t.symbol,
+                durLabel: formatDurationLabel(mins),
+                date: t.date,
+                tradeId: t.id
+            };
+        });
+        const durXs = durationPoints.map(p => p.x);
+        const durXFocus = clusterAxisRange(durXs, { pad: 0.15, floorMin: 0, showAll: scatterShowAllOutliers });
+        durOutliers = durXFocus.outlierCount + yFocus.outlierCount;
 
         durationPerformanceChart = new Chart(durationCtx.getContext('2d'), {
             type: 'scatter',
             data: {
                 datasets: [{
                     label: 'P/L',
-                    data: list.map(t => {
-                        const mins = parseDurationMins(t);
-                        return {
-                            x: mins,
-                            y: getNetProfit(t),
-                            symbol: t.symbol,
-                            durLabel: formatDurationLabel(mins)
-                        };
-                    }),
+                    data: durationPoints,
                     backgroundColor: d => d.raw ? profitScatterColor(d.raw.y, tradeExtremes) : 'rgba(0,240,168,0.5)',
-                    pointRadius: d => d.raw ? profitPointRadius(d.raw.y, tradeExtremes) : 6
+                    pointRadius: d => d.raw ? profitPointRadius(d.raw.y, tradeExtremes) : 6,
+                    pointHoverRadius: 9
                 }]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                // Require the mouse to actually be over a dot (less sensitive)
-                interaction: { mode: 'point', intersect: true },
+                interaction: { mode: 'nearest', intersect: true },
+                onClick: (_evt, elements) => {
+                    if (!elements.length) return;
+                    navigateScatterTrade(durationPerformanceChart.data.datasets[0].data[elements[0].index]);
+                },
                 scales: {
                     x: {
                         title: { display: true, text: 'How long held (min)', color: '#8e8e93' },
                         grid: { color: 'rgba(255,255,255,0.05)' },
-                        min: 0, max: xBound
+                        min: 0,
+                        max: niceAxisBound(Math.max(durXFocus.max, 5))
                     },
                     y: {
                         title: { display: true, text: 'Profit / Loss ($)', color: '#8e8e93' },
                         grid: { color: 'rgba(255,255,255,0.05)' },
-                        min: -yBound, max: yBound,
+                        min: yAxisMin,
+                        max: yAxisMax,
                         ticks: { callback: (v) => (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString() }
                     }
                 },
                 plugins: buildScatterPlugins('duration')
             }
         });
+        bindScatterClick(durationPerformanceChart);
     }
+
+    updateScatterOutlierToggles(timeXFocus.outlierCount + yFocus.outlierCount, durOutliers);
 }
 
 let scoreRadarChart = null;
@@ -1853,6 +2002,7 @@ const SIDEBAR_NAV_ITEMS = [
     { href: 'calendar.html', label: 'Calendar', icon: '<rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/>' },
     { href: 'day-view.html', label: 'Day View', icon: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>' },
     { href: 'trade-view.html', label: 'Trade View', icon: '<path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path>' },
+    { href: 'earnings.html', label: 'Earnings', icon: '<path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
     { href: 'reports.html', label: 'Reports', icon: '<path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path>' },
     { href: 'ai-chat.html', label: 'AI Chat', icon: '<path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M5 19l1 3 1-3 3-1-3-1-1-3-1 3-3 1z"/><path d="M19 13l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5L17 15z"/>' },
     { href: 'trade-replay.html', label: 'Trade Replay', icon: '<circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/>' },
@@ -1865,6 +2015,7 @@ const PAGE_HEADERS = {
     'calendar.html': { title: 'Calendar', desc: 'Your trading month at a glance — click any day to open it.' },
     'day-view.html': { title: 'Day View', desc: 'Deep-dive into a single session — trades, charts, and notes.' },
     'trade-view.html': { title: 'Trade View', desc: 'Search, filter, and manage your complete trade history.' },
+    'earnings.html': { title: 'Earnings', desc: 'Projected salary from your edge — and goals that advance when you hit them.' },
     'reports.html': { title: 'Reports', desc: 'Performance breakdowns, drawdowns, and cumulative P/L trends.' },
     'ai-chat.html': { title: 'AI Chat', desc: 'Ask questions about your journal — powered by your trade data.' },
     'trade-replay.html': { title: 'Trade Replay', desc: 'Step through sessions with charts, levels, and playback.' },
@@ -3704,6 +3855,7 @@ function refreshAllViews() {
     if (typeof initReports === 'function') initReports();
     if (typeof initDayView === 'function') initDayView();
     if (typeof populateNotebook === 'function') populateNotebook();
+    if (typeof initEarningsPage === 'function' && document.getElementById('earnDaily')) initEarningsPage();
 }
 
 // --- Watchlist & Trade View Filters ---
@@ -4067,7 +4219,7 @@ function formatChartWallTime(chartTime) {
     const m = d.getUTCMinutes();
     const ampm = h >= 12 ? 'PM' : 'AM';
     const h12 = h % 12 || 12;
-    return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+    return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
 function getTradeEndDateTime(trade) {
@@ -4185,10 +4337,30 @@ function calcEMA(candles, period = 8) {
 }
 
 function calcVwap(candles) {
+    // Session VWAP like TradingView — resets at 4:00 AM ET each trading day
     let cumVol = 0;
     let cumTpVol = 0;
+    let sessionKey = null;
     const out = [];
     (candles || []).forEach(c => {
+        const d = new Date(c.time * 1000);
+        let y = d.getUTCFullYear();
+        let mo = d.getUTCMonth();
+        let day = d.getUTCDate();
+        const mins = d.getUTCHours() * 60 + d.getUTCMinutes();
+        if (mins < 4 * 60) {
+            const prev = new Date(Date.UTC(y, mo, day));
+            prev.setUTCDate(prev.getUTCDate() - 1);
+            y = prev.getUTCFullYear();
+            mo = prev.getUTCMonth();
+            day = prev.getUTCDate();
+        }
+        const key = `${y}-${mo}-${day}`;
+        if (key !== sessionKey) {
+            sessionKey = key;
+            cumVol = 0;
+            cumTpVol = 0;
+        }
         const vol = c.volume > 0 ? c.volume : 1;
         const tp = (c.high + c.low + c.close) / 3;
         cumVol += vol;
@@ -4259,7 +4431,7 @@ function applyReplayPriceLines(levels) {
         const line = add(getReplayLevelPrice(def.key), def.color, def.title);
         if (line) replayState.levelLineRefs[def.key] = line;
     });
-    (levels.psychLevels || []).forEach(p => add(p, '#26a69a', String(p), 2, 1));
+    (levels.psychLevels || []).forEach(p => add(p, '#4caf50', String(p), 0, 1));
     updateReplayLevelHandles();
 }
 
@@ -4792,19 +4964,18 @@ function updateSessionOverlays() {
         return;
     }
     const ts = replayState.chart.timeScale();
-    const dateStr = trade.date;
-    const mktClose = tradeTimeToChartTime(dateStr, '16:00');
-    const afterHoursEnd = tradeTimeToChartTime(dateStr, '20:00');
-    const todayStart = tradeTimeToChartTime(dateStr, '4:00');
     const all = replayState.allCandles?.length
         ? replayState.allCandles
         : [...(replayState.preCandles || []), ...(replayState.tradeCandles || []), ...(replayState.postCandles || [])];
+    if (!all.length) {
+        overlay.innerHTML = '';
+        return;
+    }
     const barSec = Math.max(60, (replayState.intervalMin || 5) * 60);
 
     const coordForTime = (t) => {
         let x = ts.timeToCoordinate(t);
         if (x != null) return x;
-        if (!all.length) return null;
         let nearest = all[0].time;
         let bestDiff = Math.abs(nearest - t);
         all.forEach(c => {
@@ -4836,20 +5007,35 @@ function updateSessionOverlays() {
         return `<div class="${cls}" style="left:${left}px;width:${width}px"></div>`;
     };
 
-    const overnightCandles = all.filter(c => c.time >= mktClose && c.time <= afterHoursEnd);
-    const priorDayCandles = all.filter(c => c.time < todayStart);
+    // Unique YYYY-MM-DD keys from candle UTC wall times (chart stores ET as UTC)
+    const dateKeys = [...new Set(all.map(c => {
+        const d = new Date(c.time * 1000);
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    }))].sort();
+
     const regions = [];
-    if (priorDayCandles.length) {
-        regions.push(buildRegion(
-            priorDayCandles[0].time,
-            todayStart,
-            'replay-shade-prior-day',
-            priorDayCandles
-        ));
-    }
-    if (overnightCandles.length) {
-        regions.push(buildRegion(mktClose, afterHoursEnd, 'replay-shade-overnight', overnightCandles));
-    }
+    dateKeys.forEach(dateStr => {
+        const rthOpen = tradeTimeToChartTime(dateStr, '09:30');
+        const mktClose = tradeTimeToChartTime(dateStr, '16:00');
+        const dayStart = tradeTimeToChartTime(dateStr, '00:00');
+        const dayEnd = tradeTimeToChartTime(dateStr, '23:59');
+
+        // TradingView-style: amber RTH band, blue overnight/extended (4pm→9:30)
+        const preExt = all.filter(c => c.time >= dayStart && c.time < rthOpen);
+        const rthCandles = all.filter(c => c.time >= rthOpen && c.time < mktClose);
+        const postExt = all.filter(c => c.time >= mktClose && c.time <= dayEnd);
+
+        if (preExt.length) {
+            regions.push(buildRegion(dayStart, rthOpen, 'replay-shade-overnight', preExt));
+        }
+        if (rthCandles.length) {
+            regions.push(buildRegion(rthOpen, mktClose, 'replay-shade-rth', rthCandles));
+        }
+        if (postExt.length) {
+            regions.push(buildRegion(mktClose, dayEnd, 'replay-shade-overnight', postExt));
+        }
+    });
+
     overlay.innerHTML = regions.filter(Boolean).join('');
 }
 
@@ -4956,8 +5142,16 @@ function setInitialReplayViewport(visibleCount) {
 
 function updateReplayIndicators(visible) {
     if (!visible.length || !replayState.vwapSeries || !replayState.emaSeries) return;
-    replayState.emaSeries.setData(calcEMA(visible, 8));
-    replayState.vwapSeries.setData(calcVwap(visible));
+    const ema = calcEMA(visible, 8);
+    const vwap = calcVwap(visible);
+    replayState.emaSeries.setData(ema);
+    replayState.vwapSeries.setData(vwap);
+    const lastEma = ema[ema.length - 1]?.value;
+    const lastVwap = vwap[vwap.length - 1]?.value;
+    const vwapEl = document.getElementById('replayLegendVwap');
+    const emaEl = document.getElementById('replayLegendEma');
+    if (vwapEl) vwapEl.textContent = Number.isFinite(lastVwap) ? lastVwap.toFixed(2) : '—';
+    if (emaEl) emaEl.textContent = Number.isFinite(lastEma) ? lastEma.toFixed(2) : '—';
 }
 
 async function fetchMarketChartJson(url) {
@@ -5360,14 +5554,20 @@ function updateReplayOhlc(candle) {
         const el = document.getElementById(id);
         if (el) el.textContent = Number.isFinite(val) ? val.toFixed(2) : '—';
     };
+    const ohlc = document.getElementById('replayOhlc');
     if (!candle) {
         set('replayO', null); set('replayH', null); set('replayL', null); set('replayC', null);
+        if (ohlc) ohlc.classList.remove('replay-ohlc--up', 'replay-ohlc--down');
         return;
     }
     set('replayO', candle.open);
     set('replayH', candle.high);
     set('replayL', candle.low);
     set('replayC', candle.close);
+    if (ohlc) {
+        ohlc.classList.toggle('replay-ohlc--up', candle.close >= candle.open);
+        ohlc.classList.toggle('replay-ohlc--down', candle.close < candle.open);
+    }
 }
 
 function renderReplayFrame() {
@@ -5598,6 +5798,7 @@ function loadReplayTrade(trade) {
 
     const net = getNetProfit(trade);
     const sym = extractBaseTicker(trade.symbol);
+    const interval = `${replayState.intervalMin || 5}`;
     const title = document.getElementById('replayChartTitle');
     const pnl = document.getElementById('replayChartPnl');
     if (title) title.textContent = `${sym} · ${formatTradeDate(trade.date)}`;
@@ -5605,6 +5806,10 @@ function loadReplayTrade(trade) {
         pnl.textContent = formatProfit(net);
         pnl.style.color = profitColor(net);
     }
+    const legend = document.getElementById('replayChartLegend');
+    const legendTitle = document.getElementById('replayLegendTitle');
+    if (legend) legend.hidden = false;
+    if (legendTitle) legendTitle.textContent = `${sym} · ${interval} · ${(trade.type || 'TRADE').toUpperCase()}`;
     updateReplaySideHeader(trade);
     renderReplayExecutions(trade);
     renderReplayTradeDetails(trade);
@@ -5721,10 +5926,15 @@ function initReplayChart() {
     if (!el || typeof LightweightCharts === 'undefined') return;
 
     replayState.chart = LightweightCharts.createChart(el, {
-        layout: { background: { color: '#131722' }, textColor: '#787b86' },
+        layout: {
+            background: { color: '#131722' },
+            textColor: '#787b86',
+            fontSize: 11,
+            fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif"
+        },
         grid: {
-            vertLines: { color: 'rgba(42, 46, 57, 0.8)' },
-            horzLines: { color: 'rgba(42, 46, 57, 0.8)' }
+            vertLines: { color: 'rgba(42, 46, 57, 0.55)' },
+            horzLines: { color: 'rgba(42, 46, 57, 0.55)' }
         },
         localization: {
             timeFormatter: (t) => {
@@ -5736,46 +5946,63 @@ function initReplayChart() {
         },
         rightPriceScale: {
             borderColor: '#2a2e39',
+            borderVisible: true,
             autoScale: true,
-            scaleMargins: { top: 0.06, bottom: 0.06 }
+            scaleMargins: { top: 0.08, bottom: 0.08 }
         },
         timeScale: {
             borderColor: '#2a2e39',
+            borderVisible: true,
             timeVisible: true,
             secondsVisible: false,
-            rightOffset: 12,
+            rightOffset: 8,
+            barSpacing: 7,
+            minBarSpacing: 3,
             tickMarkFormatter: (time) => formatChartWallTime(time)
         },
         crosshair: {
             mode: LightweightCharts.CrosshairMode.Normal,
-            vertLine: { color: 'rgba(120, 123, 134, 0.5)', width: 1, style: 2 },
-            horzLine: { color: 'rgba(120, 123, 134, 0.5)', width: 1, style: 2 }
+            vertLine: {
+                color: 'rgba(178, 181, 190, 0.45)',
+                width: 1,
+                style: 3,
+                labelBackgroundColor: '#2962ff'
+            },
+            horzLine: {
+                color: 'rgba(178, 181, 190, 0.45)',
+                width: 1,
+                style: 3,
+                labelBackgroundColor: '#2962ff'
+            }
         },
         ...getReplayPanOptions(true)
     });
 
+    // TradingView default: solid green / solid red candles
     replayState.series = replayState.chart.addCandlestickSeries({
         upColor: '#26a69a',
-        downColor: '#ffffff',
+        downColor: '#ef5350',
         borderVisible: false,
         wickUpColor: '#26a69a',
-        wickDownColor: '#ffffff'
+        wickDownColor: '#ef5350'
     });
 
     replayState.vwapSeries = replayState.chart.addLineSeries({
-        color: '#E8C547',
+        color: '#ff9800',
         lineWidth: 1,
         title: 'VWAP',
         priceLineVisible: false,
-        lastValueVisible: true
+        lastValueVisible: true,
+        crosshairMarkerVisible: false
     });
 
     replayState.emaSeries = replayState.chart.addLineSeries({
         color: '#2962ff',
         lineWidth: 1,
-        title: 'EMA 8',
+        title: 'EMA',
         priceLineVisible: false,
-        lastValueVisible: true
+        lastValueVisible: true,
+        crosshairMarkerVisible: false
     });
 
     const resize = () => {
@@ -6067,6 +6294,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (document.getElementById('notebookEntries')) populateNotebook();
     if (document.getElementById('replayChart')) initTradeReplay();
     if (document.getElementById('aiChatHero')) initAiChat();
+    if (document.getElementById('earnDaily')) initEarningsPage();
 
     // Notification listeners are now attached dynamically in showNotification()
 
@@ -6513,6 +6741,8 @@ function selectReplayDate(viewDate) {
         updateReplayOhlc(null);
         document.getElementById('replayChartTitle').textContent = 'No trades this day';
         document.getElementById('replayChartPnl').textContent = '—';
+        const legend = document.getElementById('replayChartLegend');
+        if (legend) legend.hidden = true;
     }
 }
 
@@ -6640,35 +6870,38 @@ function initDayView() {
                     </div>
                 `;
 
-                // Image + Notes side-by-side (or just one if only one exists)
+                // Screenshot + notes side-by-side; live trade chart sits below notes/screenshot
                 const hasImage = !!t.imageDataUrl;
                 const hasNotes = !!t.notes;
 
-                let bodyContent = `<div style="display:grid; grid-template-columns:${hasImage && hasNotes ? '1.6fr 1fr' : '1fr'}; gap:1.5rem; align-items:flex-start;">`;
+                let bodyContent = '';
+                if (hasImage || hasNotes) {
+                    const cols = hasImage && hasNotes ? '1.6fr 1fr' : '1fr';
+                    bodyContent += `<div class="day-trade-media" style="grid-template-columns:${cols};">`;
 
-                if (hasImage) {
-                    bodyContent += `
-                        <div>
-                            <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Chart Screenshot</div>
-                            <img src="${t.imageDataUrl}" alt="Trade chart"
-                                style="width:100%; max-height:380px; border-radius:10px; object-fit:contain; border:1px solid var(--border); cursor:zoom-in; transition:opacity 0.2s;"
-                                onclick="openImageLightbox('${t.id}')"
-                                onmouseover="this.style.opacity='0.85'"
-                                onmouseout="this.style.opacity='1'">
-                        </div>
-                    `;
+                    if (hasImage) {
+                        bodyContent += `
+                            <div class="day-trade-shot">
+                                <div class="day-trade-media-label">Chart Screenshot</div>
+                                <div class="day-trade-shot-frame">
+                                    <img src="${t.imageDataUrl}" alt="Trade chart"
+                                        onclick="openImageLightbox('${t.id}')">
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    if (hasNotes) {
+                        bodyContent += `
+                            <div class="day-trade-notes">
+                                <div class="day-trade-media-label">Strategy &amp; Notes</div>
+                                <div class="day-trade-notes-body">${t.notes}</div>
+                            </div>
+                        `;
+                    }
+
+                    bodyContent += `</div>`;
                 }
-
-                if (hasNotes) {
-                    bodyContent += `
-                        <div>
-                            <div style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Strategy &amp; Notes</div>
-                            <div style="background:rgba(255,255,255,0.03); border-radius:10px; padding:1.4rem 1.6rem; border:1px solid var(--border); color:rgba(255,255,255,0.87); font-size:0.95rem; line-height:1.8; min-height:120px; white-space:pre-wrap;">${t.notes}</div>
-                        </div>
-                    `;
-                }
-
-                bodyContent += `</div>`;
 
                 const snippetBlock = `
                     <div class="day-trade-snippet-wrap">
@@ -6680,7 +6913,7 @@ function initDayView() {
                     </div>
                 `;
 
-                card.innerHTML = cardHeader + snippetBlock + bodyContent;
+                card.innerHTML = cardHeader + bodyContent + snippetBlock;
                 
                 // Attach button listeners
                 const editBtn = card.querySelector('.edit-analysis-btn');
@@ -6708,21 +6941,519 @@ function initDayView() {
         }
     }
 
-    // Setup Nav Buttons
+    // Setup Nav Buttons — skip weekends (Sat/Sun)
     const prevBtn = document.getElementById('dayNavPrev');
     const nextBtn = document.getElementById('dayNavNext');
     if (prevBtn && nextBtn) {
-        const [y, m, d] = viewDate.split('-').map(Number);
         prevBtn.onclick = () => {
-            const prev = new Date(y, m - 1, d - 1);
-            const prevStr = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, '0')}-${String(prev.getDate()).padStart(2, '0')}`;
-            window.location.href = `day-view.html?date=${prevStr}`;
+            window.location.href = `day-view.html?date=${shiftWeekdayDate(viewDate, -1)}`;
         };
         nextBtn.onclick = () => {
-            const next = new Date(y, m - 1, d + 1);
-            const nextStr = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
-            window.location.href = `day-view.html?date=${nextStr}`;
+            window.location.href = `day-view.html?date=${shiftWeekdayDate(viewDate, 1)}`;
         };
+    }
+}
+
+function shiftWeekdayDate(dateStr, direction) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    const step = direction < 0 ? -1 : 1;
+    do {
+        dt.setDate(dt.getDate() + step);
+    } while (dt.getDay() === 0 || dt.getDay() === 6);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+// ---- Earnings page ----
+const EARNINGS_GOALS_KEY = 'tradeJournalEarningsGoals';
+const DEFAULT_EARNINGS_GOALS = {
+    allTimeTarget: null,
+    paceDaily: null,
+    paceWeekly: null,
+    paceMonthly: null,
+    level: 1,
+    goalsHit: 0,
+    lastHitTarget: null
+};
+const EARNINGS_MILESTONE_LADDER = [
+    100, 250, 500, 1000, 1500, 2500, 5000, 7500,
+    10000, 15000, 25000, 50000, 75000, 100000,
+    150000, 250000, 500000, 1000000
+];
+
+let earnMonthPaceChart = null;
+let earnHistoryChart = null;
+
+function getEarningsGoals() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(EARNINGS_GOALS_KEY) || 'null');
+        return { ...DEFAULT_EARNINGS_GOALS, ...(raw || {}) };
+    } catch (e) {
+        return { ...DEFAULT_EARNINGS_GOALS };
+    }
+}
+
+function saveEarningsGoals(goals) {
+    localStorage.setItem(EARNINGS_GOALS_KEY, JSON.stringify(goals));
+}
+
+function niceEarningsMilestone(val) {
+    if (!Number.isFinite(val) || val <= 0) return EARNINGS_MILESTONE_LADDER[0];
+    for (const step of EARNINGS_MILESTONE_LADDER) {
+        if (step > val) return step;
+    }
+    // Beyond ladder: round up to a clean stretch (~25% above)
+    const stretched = val * 1.25;
+    const pow = Math.pow(10, Math.floor(Math.log10(stretched)));
+    return Math.ceil(stretched / pow) * pow;
+}
+
+function getAllTimeNetPL() {
+    return sumNetProfit(trades || []);
+}
+
+function getEarningsSalaryStats() {
+    const dailyMap = {};
+    (trades || []).forEach(t => {
+        if (!t.date) return;
+        dailyMap[t.date] = (dailyMap[t.date] || 0) + getNetProfit(t);
+    });
+    const days = Object.keys(dailyMap);
+    const tradingDays = days.length;
+    const totalNet = days.reduce((s, d) => s + dailyMap[d], 0);
+    const avgDay = tradingDays > 0 ? totalNet / tradingDays : 0;
+    let bestDay = null;
+    let bestPl = -Infinity;
+    days.forEach(d => {
+        if (dailyMap[d] > bestPl) {
+            bestPl = dailyMap[d];
+            bestDay = d;
+        }
+    });
+    return {
+        tradingDays,
+        totalNet,
+        avgDay,
+        bestDay,
+        bestPl: Number.isFinite(bestPl) && bestDay ? bestPl : 0,
+        daily: avgDay,
+        weekly: avgDay * 5,
+        monthly: avgDay * 21,
+        yearly: avgDay * 252
+    };
+}
+
+function getMonthlyPlHistory() {
+    const map = {};
+    (trades || []).forEach(t => {
+        if (!t.date) return;
+        const key = t.date.slice(0, 7);
+        map[key] = (map[key] || 0) + getNetProfit(t);
+    });
+    return Object.entries(map)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, pnl]) => ({ month, pnl }));
+}
+
+function getAllTimeCumulativeSeries() {
+    const dailyMap = {};
+    (trades || []).forEach(t => {
+        if (!t.date) return;
+        dailyMap[t.date] = (dailyMap[t.date] || 0) + getNetProfit(t);
+    });
+    const days = Object.keys(dailyMap).sort();
+    let run = 0;
+    return days.map(date => {
+        run += dailyMap[date];
+        return { date, balance: run };
+    });
+}
+
+/** Seed missing targets. Completed goals stay claimable until clicked. */
+function syncAutoEarningsGoals(allTimeNet, salary) {
+    const goals = getEarningsGoals();
+    let changed = false;
+
+    if (!Number.isFinite(goals.allTimeTarget) || goals.allTimeTarget <= 0) {
+        const base = Math.max(allTimeNet, 0);
+        goals.allTimeTarget = base > 0 ? niceEarningsMilestone(base) : 1000;
+        if (goals.allTimeTarget <= base) goals.allTimeTarget = niceEarningsMilestone(base + 1);
+        changed = true;
+    }
+
+    const seedPace = autoPaceTargets(salary, goals.allTimeTarget);
+    if (!Number.isFinite(goals.paceDaily) || goals.paceDaily <= 0) {
+        goals.paceDaily = seedPace.daily;
+        changed = true;
+    }
+    if (!Number.isFinite(goals.paceWeekly) || goals.paceWeekly <= 0) {
+        goals.paceWeekly = seedPace.weekly;
+        changed = true;
+    }
+    if (!Number.isFinite(goals.paceMonthly) || goals.paceMonthly <= 0) {
+        goals.paceMonthly = seedPace.monthly;
+        changed = true;
+    }
+
+    if (changed) saveEarningsGoals(goals);
+    return goals;
+}
+
+function autoPaceTargets(salary, allTimeTarget) {
+    const target = Math.max(allTimeTarget || 1000, 100);
+    return {
+        daily: Math.max(25, Math.round(target / 252)),
+        weekly: Math.max(100, Math.round(target / 52)),
+        monthly: Math.max(250, Math.round(target / 12)),
+        yearly: Math.round(target)
+    };
+}
+
+function bumpPaceGoalAmount(amount) {
+    if (amount < 50) return Math.round(amount + 25);
+    if (amount < 100) return Math.round(amount + 50);
+    if (amount < 500) return Math.round(amount + 100);
+    if (amount < 2000) return Math.round(amount * 1.25);
+    return Math.round(amount * 1.2);
+}
+
+window.claimEarningsGoal = function claimEarningsGoal(kind) {
+    const salary = getEarningsSalaryStats();
+    const allTimeNet = salary.totalNet;
+    const goals = getEarningsGoals();
+    let oldTarget = null;
+    let claimed = false;
+
+    if (kind === 'allTime') {
+        if (allTimeNet < goals.allTimeTarget) return;
+        oldTarget = goals.allTimeTarget;
+        goals.lastHitTarget = oldTarget;
+        let guards = 0;
+        do {
+            const prev = goals.allTimeTarget;
+            goals.allTimeTarget = niceEarningsMilestone(prev);
+            if (goals.allTimeTarget <= prev) goals.allTimeTarget = Math.round(prev * 1.25);
+            guards++;
+        } while (allTimeNet >= goals.allTimeTarget && guards < 50);
+        claimed = true;
+    } else if (kind === 'daily') {
+        if (salary.daily < goals.paceDaily) return;
+        oldTarget = goals.paceDaily;
+        let guards = 0;
+        do {
+            goals.paceDaily = bumpPaceGoalAmount(goals.paceDaily);
+            guards++;
+        } while (salary.daily >= goals.paceDaily && guards < 30);
+        claimed = true;
+    } else if (kind === 'weekly') {
+        if (salary.weekly < goals.paceWeekly) return;
+        oldTarget = goals.paceWeekly;
+        let guards = 0;
+        do {
+            goals.paceWeekly = bumpPaceGoalAmount(goals.paceWeekly);
+            guards++;
+        } while (salary.weekly >= goals.paceWeekly && guards < 30);
+        claimed = true;
+    } else if (kind === 'monthly') {
+        if (salary.monthly < goals.paceMonthly) return;
+        oldTarget = goals.paceMonthly;
+        let guards = 0;
+        do {
+            goals.paceMonthly = bumpPaceGoalAmount(goals.paceMonthly);
+            guards++;
+        } while (salary.monthly >= goals.paceMonthly && guards < 30);
+        claimed = true;
+    }
+
+    if (!claimed) return;
+    saveEarningsGoals(goals);
+    showEarningsLevelUp({ oldTarget, goals, allTimeNet, kind });
+    initEarningsPage();
+};
+
+function renderEarningsGoalRing(el, pct) {
+    if (!el) return;
+    const p = Math.max(0, Math.min(100, pct));
+    const r = 36;
+    const circ = 2 * Math.PI * r;
+    const filled = (p / 100) * circ;
+    el.innerHTML = `
+        <svg viewBox="0 0 90 90">
+            <circle cx="45" cy="45" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="8"/>
+            <circle cx="45" cy="45" r="${r}" fill="none" stroke="${p >= 100 ? '#00f0a8' : '#7b61ff'}" stroke-width="8"
+                stroke-linecap="round" stroke-dasharray="${filled} ${circ}"
+                transform="rotate(-90 45 45)"/>
+            <text x="45" y="50" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">${Math.round(p)}%</text>
+        </svg>
+    `;
+}
+
+function renderEarningsGoalsList(allTimeNet, goals, salary) {
+    const list = document.getElementById('earnGoalList');
+    if (!list) return;
+
+    const rows = [
+        {
+            kind: 'allTime',
+            label: 'All-time net P/L',
+            actual: allTimeNet,
+            goal: goals.allTimeTarget,
+            hit: allTimeNet >= goals.allTimeTarget
+        },
+        {
+            kind: 'daily',
+            label: 'Pace · daily',
+            actual: salary.daily,
+            goal: goals.paceDaily,
+            hit: salary.daily >= goals.paceDaily
+        },
+        {
+            kind: 'weekly',
+            label: 'Pace · weekly',
+            actual: salary.weekly,
+            goal: goals.paceWeekly,
+            hit: salary.weekly >= goals.paceWeekly
+        },
+        {
+            kind: 'monthly',
+            label: 'Pace · monthly',
+            actual: salary.monthly,
+            goal: goals.paceMonthly,
+            hit: salary.monthly >= goals.paceMonthly
+        }
+    ];
+
+    list.innerHTML = rows.map(row => {
+        const pct = Math.max(0, Math.min(100, (Math.max(row.actual, 0) / Math.max(row.goal, 1)) * 100));
+        const remaining = Math.max(0, row.goal - row.actual);
+        const check = row.hit
+            ? `<span class="earnings-goal-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>`
+            : `<span class="earnings-goal-check earnings-goal-check--empty" aria-hidden="true"></span>`;
+        const tag = row.hit ? 'Done — click to unlock next goal' : `${formatMoney(remaining)} to go`;
+
+        if (row.hit) {
+            return `
+                <button type="button" class="earnings-goal-row earnings-goal-row--hit earnings-goal-row--claimable"
+                    onclick="claimEarningsGoal('${row.kind}')" title="Click to set the next goal">
+                    <div class="earnings-goal-row-top">
+                        <span class="earnings-goal-title">${check}${row.label}</span>
+                        <span class="earnings-goal-amounts">${formatSignedMoney(row.actual)} <span class="earnings-goal-target">/ ${formatMoney(row.goal)}</span></span>
+                    </div>
+                    <div class="earnings-goal-bar"><div class="earnings-goal-bar-fill" style="width:100%"></div></div>
+                    <div class="earnings-goal-hit-tag">${tag}</div>
+                </button>
+            `;
+        }
+
+        return `
+            <div class="earnings-goal-row">
+                <div class="earnings-goal-row-top">
+                    <span class="earnings-goal-title">${check}${row.label}</span>
+                    <span class="earnings-goal-amounts" style="color:${profitColor(row.actual)}">${formatSignedMoney(row.actual)} <span class="earnings-goal-target">/ ${formatMoney(row.goal)}</span></span>
+                </div>
+                <div class="earnings-goal-bar"><div class="earnings-goal-bar-fill" style="width:${pct}%"></div></div>
+                <div class="earnings-goal-hit-tag" style="color:var(--text-muted);font-weight:500">${tag}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function showEarningsLevelUp(payload) {
+    const wrap = document.getElementById('earningsLevelUp');
+    if (!wrap || !payload) return;
+    const labels = { allTime: 'all-time', daily: 'daily pace', weekly: 'weekly pace', monthly: 'monthly pace' };
+    const next = payload.kind === 'allTime' ? payload.goals.allTimeTarget
+        : payload.kind === 'daily' ? payload.goals.paceDaily
+        : payload.kind === 'weekly' ? payload.goals.paceWeekly
+        : payload.goals.paceMonthly;
+    document.getElementById('earningsLevelUpTitle').textContent = 'Next goal unlocked';
+    document.getElementById('earningsLevelUpMsg').textContent =
+        `You cleared the ${formatMoney(payload.oldTarget)} ${labels[payload.kind] || ''} goal. Next target: ${formatMoney(next)}.`;
+    wrap.hidden = false;
+    document.getElementById('earningsLevelUpDismiss')?.addEventListener('click', () => {
+        wrap.hidden = true;
+    }, { once: true });
+}
+
+function initEarningsPage() {
+    if (!document.getElementById('earnDaily')) return;
+
+    const salary = getEarningsSalaryStats();
+    const allTimeNet = salary.totalNet;
+    const goals = syncAutoEarningsGoals(allTimeNet, salary);
+    const target = goals.allTimeTarget || 1000;
+
+    const setMoney = (id, val) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = formatSignedMoney(val);
+        el.style.color = profitColor(val);
+    };
+    setMoney('earnDaily', salary.daily);
+    setMoney('earnWeekly', salary.weekly);
+    setMoney('earnMonthly', salary.monthly);
+    setMoney('earnYearly', salary.yearly);
+
+    const note = document.getElementById('earnSalaryNote');
+    if (note) {
+        note.textContent = salary.tradingDays
+            ? `Based on ${formatSignedMoney(salary.avgDay)} avg/day across ${salary.tradingDays} trading day${salary.tradingDays === 1 ? '' : 's'} (${(trades || []).length} trades).`
+            : 'Log some trades to unlock salary projections.';
+    }
+
+    renderEarningsGoalsList(allTimeNet, goals, salary);
+
+    const goalNote = document.getElementById('earnGoalNote');
+    if (goalNote) {
+        goalNote.textContent = allTimeNet >= target
+            ? 'All-time milestone hit — tap the green check to unlock the next one.'
+            : `Next all-time milestone: ${formatMoney(target)} · ${formatMoney(Math.max(0, target - allTimeNet))} to go.`;
+    }
+
+    document.getElementById('earnMonthLabel').textContent = 'All-time net P/L';
+    setMoney('earnMonthPl', allTimeNet);
+    document.getElementById('earnMonthSub').textContent = `of ${formatMoney(target)} milestone`;
+    renderEarningsGoalRing(document.getElementById('earnMonthRing'), (Math.max(allTimeNet, 0) / Math.max(target, 1)) * 100);
+
+    document.getElementById('earnTradingDays').textContent = String(salary.tradingDays);
+    document.getElementById('earnTradesSub').textContent = `${(trades || []).length} trades`;
+    setMoney('earnAvgDay', salary.avgDay);
+    setMoney('earnBestDay', salary.bestPl);
+    document.getElementById('earnBestDaySub').textContent = salary.bestDay ? formatTradeDate(salary.bestDay) : '—';
+
+    const wins = (trades || []).filter(t => getNetProfit(t) > 0);
+    const losses = (trades || []).filter(t => getNetProfit(t) < 0);
+    const winCount = wins.length;
+    const lossCount = losses.length;
+    const wr = trades.length ? ((winCount / trades.length) * 100).toFixed(0) : '0';
+    document.getElementById('earnWinRate').textContent = `${wr}%`;
+    document.getElementById('earnWinLossSub').textContent = `${winCount}W / ${lossCount}L`;
+
+    const avgWin = winCount > 0 ? wins.reduce((s, t) => s + getNetProfit(t), 0) / winCount : 0;
+    const avgLossAbs = lossCount > 0 ? Math.abs(losses.reduce((s, t) => s + getNetProfit(t), 0) / lossCount) : 0;
+    setMoney('earnAvgWin', avgWin);
+    const avgLossEl = document.getElementById('earnAvgLoss');
+    if (avgLossEl) {
+        avgLossEl.textContent = avgLossAbs > 0 ? `-${formatMoney(avgLossAbs)}` : '$0';
+        avgLossEl.style.color = avgLossAbs > 0 ? 'var(--loss-red)' : '';
+    }
+
+    const series = getAllTimeCumulativeSeries();
+    const paceCtx = document.getElementById('earnMonthPaceChart');
+    if (paceCtx) {
+        destroyChartInstance(earnMonthPaceChart);
+        const labels = series.map(s => {
+            const [, m, d] = s.date.split('-');
+            return `${m}/${d}`;
+        });
+        const zeroAnchoredGradient = (context) => {
+            const chart = context.chart;
+            const { ctx, chartArea, scales } = chart;
+            if (!chartArea) return 'rgba(0, 240, 168, 0)';
+            const zeroY = scales.y.getPixelForValue(0);
+            const top = chartArea.top;
+            const bottomStop = Math.min(Math.max(zeroY, top), chartArea.bottom);
+            if (bottomStop <= top) return 'rgba(0, 240, 168, 0.12)';
+            const g = ctx.createLinearGradient(0, top, 0, bottomStop);
+            g.addColorStop(0, 'rgba(0, 240, 168, 0.35)');
+            g.addColorStop(1, 'rgba(0, 240, 168, 0)');
+            return g;
+        };
+        earnMonthPaceChart = new Chart(paceCtx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'All-time P/L',
+                        data: series.map(s => s.balance),
+                        borderColor: '#00f0a8',
+                        backgroundColor: zeroAnchoredGradient,
+                        fill: 'origin',
+                        tension: 0.3,
+                        pointRadius: series.length > 40 ? 0 : 3,
+                        pointHoverRadius: 6,
+                        pointHitRadius: 28,
+                        pointBackgroundColor: '#00f0a8',
+                        pointBorderColor: '#0b0b0d',
+                        pointBorderWidth: 1
+                    },
+                    {
+                        label: 'Milestone',
+                        data: series.map(() => target),
+                        borderColor: 'rgba(123,97,255,0.7)',
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        pointHitRadius: 0,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        displayColors: false,
+                        backgroundColor: '#1a1a1a',
+                        borderColor: 'rgba(255,255,255,0.1)',
+                        borderWidth: 1,
+                        padding: 12,
+                        filter: (item) => item.datasetIndex === 0,
+                        callbacks: {
+                            label: (ctx) => `P/L: ${formatSignedMoney(ctx.parsed.y)}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { ticks: { color: '#8e8e93', maxTicksLimit: 8 }, grid: { display: false } },
+                    y: { ticks: { color: '#8e8e93', callback: v => (v < 0 ? '-$' : '$') + Math.abs(v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
+    }
+
+    const history = getMonthlyPlHistory();
+    const histCtx = document.getElementById('earnHistoryChart');
+    if (histCtx) {
+        destroyChartInstance(earnHistoryChart);
+        earnHistoryChart = new Chart(histCtx.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: history.map(h => {
+                    const [yy, mm] = h.month.split('-');
+                    return `${mm}/${yy.slice(2)}`;
+                }),
+                datasets: [
+                    {
+                        label: 'Monthly P/L',
+                        data: history.map(h => h.pnl),
+                        backgroundColor: history.map(h => h.pnl >= 0 ? 'rgba(0,240,168,0.85)' : 'rgba(255,77,109,0.85)'),
+                        borderRadius: 4
+                    },
+                    {
+                        label: 'Milestone',
+                        type: 'line',
+                        data: history.map(() => target),
+                        borderColor: 'rgba(123,97,255,0.8)',
+                        borderDash: [6, 4],
+                        pointRadius: 0,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#8e8e93' }, grid: { display: false } },
+                    y: { ticks: { color: '#8e8e93', callback: v => (v < 0 ? '-$' : '$') + Math.abs(v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
+                }
+            }
+        });
     }
 }
 

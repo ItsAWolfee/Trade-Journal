@@ -171,6 +171,19 @@
                     </nav>
                     <div class="replay-chart-wrap">
                         <div id="replayChart" class="replay-chart"></div>
+                        <div id="replayChartLegend" class="replay-chart-legend" hidden>
+                            <div class="replay-legend-title" id="replayLegendTitle">—</div>
+                            <div class="replay-legend-row replay-legend-row--vwap">
+                                <span class="replay-legend-swatch"></span>
+                                <span>VWAP</span>
+                                <b id="replayLegendVwap">—</b>
+                            </div>
+                            <div class="replay-legend-row replay-legend-row--ema">
+                                <span class="replay-legend-swatch"></span>
+                                <span>EMA</span>
+                                <b id="replayLegendEma">—</b>
+                            </div>
+                        </div>
                         <div id="replaySessionOverlay" class="replay-session-overlay" aria-hidden="true"></div>
                         <div id="replayExecOverlay" class="replay-exec-overlay" aria-hidden="true"></div>
                         <div id="replayLevelHandles" class="replay-level-handles" aria-hidden="true"></div>
@@ -212,7 +225,7 @@
         </div>
     </main>
 
-    <script src="../JS/trade_logic.js?v=sync30"></script>
+    <script src="../JS/trade_logic.js?v=sync38"></script>
     <div id="notificationModal" class="notification-modal">
         <div class="notification-content">
             <div id="notificationIcon" class="notification-icon">
