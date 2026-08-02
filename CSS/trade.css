@@ -3410,6 +3410,42 @@ input[type="range"]::-webkit-slider-thumb:hover {
     color: #fff;
 }
 
+.stats-period-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.85rem;
+}
+
+.stats-period-filter--earnings {
+    margin-top: 0.25rem;
+}
+
+.stats-period-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.stats-period-segmented {
+    flex: 0 1 auto;
+}
+
+.stats-period-segmented button {
+    flex: 0 0 auto;
+    padding: 0.4rem 0.7rem;
+    white-space: nowrap;
+}
+
+.stats-period-hint {
+    margin: -0.35rem 0 1rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
 .filter-date-row {
     display: flex;
     gap: 0.5rem;

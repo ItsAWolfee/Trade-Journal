@@ -808,19 +808,134 @@ function ensureAccountBalanceStatCard() {
     grid.insertBefore(card, grid.firstChild);
 }
 
+// ---- Shared stats period filter (header cards + Earnings) ----
+const STATS_PERIOD_KEY = 'tradeJournalStatsPeriod';
+const STATS_PERIODS = [
+    { key: '7d', label: 'Last 7 days', days: 7 },
+    { key: '14d', label: 'Last 2 weeks', days: 14 },
+    { key: '30d', label: 'Last month', days: 30 },
+    { key: 'all', label: 'All time', days: null }
+];
+
+function getStatsPeriodKey() {
+    const raw = localStorage.getItem(STATS_PERIOD_KEY) || 'all';
+    return STATS_PERIODS.some(p => p.key === raw) ? raw : 'all';
+}
+
+function getStatsPeriodMeta(key = getStatsPeriodKey()) {
+    return STATS_PERIODS.find(p => p.key === key) || STATS_PERIODS[STATS_PERIODS.length - 1];
+}
+
+function formatLocalDateISO(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
+/** Inclusive cutoff date (YYYY-MM-DD) for rolling windows; null = all time. */
+function getStatsPeriodCutoff(key = getStatsPeriodKey()) {
+    const meta = getStatsPeriodMeta(key);
+    if (!meta.days) return null;
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+    start.setDate(start.getDate() - (meta.days - 1));
+    return formatLocalDateISO(start);
+}
+
+function getTradesForStatsPeriod(list = trades, key = getStatsPeriodKey()) {
+    const cutoff = getStatsPeriodCutoff(key);
+    const source = list || [];
+    if (!cutoff) return source.slice();
+    const today = formatLocalDateISO(new Date());
+    return source.filter(t => t.date && t.date >= cutoff && t.date <= today);
+}
+
+window.setStatsPeriod = function setStatsPeriod(key) {
+    if (!STATS_PERIODS.some(p => p.key === key)) return;
+    localStorage.setItem(STATS_PERIOD_KEY, key);
+    syncStatsPeriodFilterUI();
+    updateDashboardStats();
+    if (document.getElementById('earnDaily')) initEarningsPage();
+};
+
+function buildStatsPeriodFilterHtml(extraClass = '') {
+    const active = getStatsPeriodKey();
+    const buttons = STATS_PERIODS.map(p =>
+        `<button type="button" class="stats-period-btn${p.key === active ? ' active' : ''}" data-stats-period="${p.key}">${p.label}</button>`
+    ).join('');
+    const cls = extraClass ? `stats-period-filter ${extraClass}` : 'stats-period-filter';
+    return `<div class="${cls}" role="group" aria-label="Stats time range">
+        <span class="stats-period-label">Range</span>
+        <div class="segmented stats-period-segmented">${buttons}</div>
+    </div>`;
+}
+
+function syncStatsPeriodFilterUI() {
+    const active = getStatsPeriodKey();
+    document.querySelectorAll('[data-stats-period]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.statsPeriod === active);
+    });
+}
+
+function ensureStatsPeriodFilter() {
+    // Day View stays locked to the selected day — skip period filter there
+    if (document.getElementById('dayTradeDetails')) return;
+
+    const bind = (root) => {
+        if (!root) return;
+        root.querySelectorAll('[data-stats-period]').forEach(btn => {
+            if (btn.dataset.bound === '1') return;
+            btn.dataset.bound = '1';
+            btn.addEventListener('click', () => setStatsPeriod(btn.dataset.statsPeriod));
+        });
+    };
+
+    const grid = document.querySelector('.stats-grid--rich');
+    if (grid && !document.getElementById('statsPeriodFilter')) {
+        const wrap = document.createElement('div');
+        wrap.id = 'statsPeriodFilter';
+        wrap.innerHTML = buildStatsPeriodFilterHtml();
+        // unwrap: put the filter node itself
+        const filter = wrap.firstElementChild;
+        filter.id = 'statsPeriodFilter';
+        grid.parentNode.insertBefore(filter, grid);
+        bind(filter);
+    }
+
+    const earnGrid = document.querySelector('.earnings-salary-grid');
+    if (earnGrid && !document.getElementById('earningsPeriodFilter')) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = buildStatsPeriodFilterHtml('stats-period-filter--earnings');
+        const filter = wrap.firstElementChild;
+        filter.id = 'earningsPeriodFilter';
+        earnGrid.parentNode.insertBefore(filter, earnGrid);
+        bind(filter);
+    }
+
+    syncStatsPeriodFilterUI();
+}
+
 function updateDashboardStats() {
     ensureAccountBalanceStatCard();
+    ensureStatsPeriodFilter();
 
     let statsTrades = trades;
     let balanceAsOf = null;
+    let periodLockedToDay = false;
     if (document.getElementById('dayTradeDetails')) {
         const viewDate = new URLSearchParams(window.location.search).get('date');
         if (viewDate) {
             statsTrades = trades.filter(t => t.date === viewDate);
             balanceAsOf = viewDate;
+            periodLockedToDay = true;
         }
+    } else {
+        statsTrades = getTradesForStatsPeriod(trades);
     }
 
+    const periodMeta = getStatsPeriodMeta();
     const totalFees = sumFees(statsTrades);
     const totalNetPL = sumNetProfit(statsTrades);
     const totalTrades = statsTrades.length;
@@ -864,11 +979,33 @@ function updateDashboardStats() {
     }
     if (balanceSub) {
         const depLabel = balanceAsOf ? `Deposits through ${formatTradeDate(balanceAsOf)}` : 'Total deposited';
-        balanceSub.textContent = `${depLabel}: ${formatSignedMoney(totalDeposits)} · P/L: ${formatSignedMoney(totalNetPL)}`;
+        balanceSub.textContent = `${depLabel}: ${formatSignedMoney(totalDeposits)} · P/L: ${formatSignedMoney(sumNetProfit(trades))}`;
     }
     if (netPlCount) netPlCount.textContent = totalTrades;
-    if (feesSub) feesSub.textContent = formatFeesLabel(statsTrades);
+    if (feesSub) {
+        const periodTag = periodLockedToDay ? 'This day' : periodMeta.label;
+        feesSub.textContent = `${formatFeesLabel(statsTrades)} · ${periodTag}`;
+    }
     if (winRateElem) winRateElem.textContent = `${winRate}%`;
+
+    // Show which range the header stats use (skip on day view)
+    let rangeHint = document.getElementById('statsPeriodHint');
+    if (!periodLockedToDay) {
+        const grid = document.querySelector('.stats-grid--rich');
+        if (grid && !rangeHint) {
+            rangeHint = document.createElement('div');
+            rangeHint.id = 'statsPeriodHint';
+            rangeHint.className = 'stats-period-hint';
+            grid.parentNode.insertBefore(rangeHint, grid.nextSibling);
+        }
+        if (rangeHint) {
+            rangeHint.textContent = periodMeta.key === 'all'
+                ? 'Showing all-time performance'
+                : `Showing ${periodMeta.label.toLowerCase()} · ${totalTrades} trade${totalTrades === 1 ? '' : 's'}`;
+        }
+    } else if (rangeHint) {
+        rangeHint.remove();
+    }
 
     renderSemiGauge(document.getElementById('tradeWinGauge'), wins, losses, even);
     const tw = document.getElementById('tradeWinsCount');
@@ -7012,9 +7149,10 @@ function getAllTimeNetPL() {
     return sumNetProfit(trades || []);
 }
 
-function getEarningsSalaryStats() {
+function getEarningsSalaryStats(tradeList = null) {
+    const list = tradeList || getTradesForStatsPeriod(trades);
     const dailyMap = {};
-    (trades || []).forEach(t => {
+    list.forEach(t => {
         if (!t.date) return;
         dailyMap[t.date] = (dailyMap[t.date] || 0) + getNetProfit(t);
     });
@@ -7036,6 +7174,7 @@ function getEarningsSalaryStats() {
         avgDay,
         bestDay,
         bestPl: Number.isFinite(bestPl) && bestDay ? bestPl : 0,
+        tradeCount: list.length,
         daily: avgDay,
         weekly: avgDay * 5,
         monthly: avgDay * 21,
@@ -7043,9 +7182,10 @@ function getEarningsSalaryStats() {
     };
 }
 
-function getMonthlyPlHistory() {
+function getMonthlyPlHistory(tradeList = null) {
+    const list = tradeList || trades || [];
     const map = {};
-    (trades || []).forEach(t => {
+    list.forEach(t => {
         if (!t.date) return;
         const key = t.date.slice(0, 7);
         map[key] = (map[key] || 0) + getNetProfit(t);
@@ -7055,9 +7195,10 @@ function getMonthlyPlHistory() {
         .map(([month, pnl]) => ({ month, pnl }));
 }
 
-function getAllTimeCumulativeSeries() {
+function getAllTimeCumulativeSeries(tradeList = null) {
+    const list = tradeList || trades || [];
     const dailyMap = {};
-    (trades || []).forEach(t => {
+    list.forEach(t => {
         if (!t.date) return;
         dailyMap[t.date] = (dailyMap[t.date] || 0) + getNetProfit(t);
     });
@@ -7118,7 +7259,7 @@ function bumpPaceGoalAmount(amount) {
 }
 
 window.claimEarningsGoal = function claimEarningsGoal(kind) {
-    const salary = getEarningsSalaryStats();
+    const salary = getEarningsSalaryStats(trades || []);
     const allTimeNet = salary.totalNet;
     const goals = getEarningsGoals();
     let oldTarget = null;
@@ -7277,11 +7418,17 @@ function showEarningsLevelUp(payload) {
 
 function initEarningsPage() {
     if (!document.getElementById('earnDaily')) return;
+    ensureStatsPeriodFilter();
 
-    const salary = getEarningsSalaryStats();
-    const allTimeNet = salary.totalNet;
-    const goals = syncAutoEarningsGoals(allTimeNet, salary);
+    const periodKey = getStatsPeriodKey();
+    const periodMeta = getStatsPeriodMeta(periodKey);
+    const periodTrades = getTradesForStatsPeriod(trades, periodKey);
+    const salary = getEarningsSalaryStats(periodTrades);
+    const allTimeSalary = getEarningsSalaryStats(trades || []);
+    const allTimeNet = allTimeSalary.totalNet;
+    const goals = syncAutoEarningsGoals(allTimeNet, allTimeSalary);
     const target = goals.allTimeTarget || 1000;
+    const periodNet = salary.totalNet;
 
     const setMoney = (id, val) => {
         const el = document.getElementById(id);
@@ -7297,11 +7444,12 @@ function initEarningsPage() {
     const note = document.getElementById('earnSalaryNote');
     if (note) {
         note.textContent = salary.tradingDays
-            ? `Based on ${formatSignedMoney(salary.avgDay)} avg/day across ${salary.tradingDays} trading day${salary.tradingDays === 1 ? '' : 's'} (${(trades || []).length} trades).`
-            : 'Log some trades to unlock salary projections.';
+            ? `Based on ${formatSignedMoney(salary.avgDay)} avg/day across ${salary.tradingDays} trading day${salary.tradingDays === 1 ? '' : 's'} in ${periodMeta.label.toLowerCase()} (${salary.tradeCount} trades).`
+            : `No trades in ${periodMeta.label.toLowerCase()} — log some trades or switch range.`;
     }
 
-    renderEarningsGoalsList(allTimeNet, goals, salary);
+    // Goals stay all-time; pace rows use all-time salary so milestones stay stable
+    renderEarningsGoalsList(allTimeNet, goals, allTimeSalary);
 
     const goalNote = document.getElementById('earnGoalNote');
     if (goalNote) {
@@ -7310,22 +7458,28 @@ function initEarningsPage() {
             : `Next all-time milestone: ${formatMoney(target)} · ${formatMoney(Math.max(0, target - allTimeNet))} to go.`;
     }
 
-    document.getElementById('earnMonthLabel').textContent = 'All-time net P/L';
-    setMoney('earnMonthPl', allTimeNet);
-    document.getElementById('earnMonthSub').textContent = `of ${formatMoney(target)} milestone`;
-    renderEarningsGoalRing(document.getElementById('earnMonthRing'), (Math.max(allTimeNet, 0) / Math.max(target, 1)) * 100);
+    const progressLabel = periodKey === 'all' ? 'All-time net P/L' : `${periodMeta.label} net P/L`;
+    document.getElementById('earnMonthLabel').textContent = progressLabel;
+    setMoney('earnMonthPl', periodKey === 'all' ? allTimeNet : periodNet);
+    document.getElementById('earnMonthSub').textContent = periodKey === 'all'
+        ? `of ${formatMoney(target)} milestone`
+        : `vs all-time ${formatMoney(allTimeNet)} · milestone ${formatMoney(target)}`;
+    const ringPct = periodKey === 'all'
+        ? (Math.max(allTimeNet, 0) / Math.max(target, 1)) * 100
+        : (Math.max(periodNet, 0) / Math.max(Math.abs(allTimeNet) || target, 1)) * 100;
+    renderEarningsGoalRing(document.getElementById('earnMonthRing'), ringPct);
 
     document.getElementById('earnTradingDays').textContent = String(salary.tradingDays);
-    document.getElementById('earnTradesSub').textContent = `${(trades || []).length} trades`;
+    document.getElementById('earnTradesSub').textContent = `${salary.tradeCount} trades · ${periodMeta.label}`;
     setMoney('earnAvgDay', salary.avgDay);
     setMoney('earnBestDay', salary.bestPl);
     document.getElementById('earnBestDaySub').textContent = salary.bestDay ? formatTradeDate(salary.bestDay) : '—';
 
-    const wins = (trades || []).filter(t => getNetProfit(t) > 0);
-    const losses = (trades || []).filter(t => getNetProfit(t) < 0);
+    const wins = periodTrades.filter(t => getNetProfit(t) > 0);
+    const losses = periodTrades.filter(t => getNetProfit(t) < 0);
     const winCount = wins.length;
     const lossCount = losses.length;
-    const wr = trades.length ? ((winCount / trades.length) * 100).toFixed(0) : '0';
+    const wr = periodTrades.length ? ((winCount / periodTrades.length) * 100).toFixed(0) : '0';
     document.getElementById('earnWinRate').textContent = `${wr}%`;
     document.getElementById('earnWinLossSub').textContent = `${winCount}W / ${lossCount}L`;
 
@@ -7338,7 +7492,7 @@ function initEarningsPage() {
         avgLossEl.style.color = avgLossAbs > 0 ? 'var(--loss-red)' : '';
     }
 
-    const series = getAllTimeCumulativeSeries();
+    const series = getAllTimeCumulativeSeries(periodTrades);
     const paceCtx = document.getElementById('earnMonthPaceChart');
     if (paceCtx) {
         destroyChartInstance(earnMonthPaceChart);
@@ -7359,13 +7513,14 @@ function initEarningsPage() {
             g.addColorStop(1, 'rgba(0, 240, 168, 0)');
             return g;
         };
+        const milestoneLine = periodKey === 'all' ? target : null;
         earnMonthPaceChart = new Chart(paceCtx.getContext('2d'), {
             type: 'line',
             data: {
                 labels,
                 datasets: [
                     {
-                        label: 'All-time P/L',
+                        label: periodKey === 'all' ? 'All-time P/L' : `${periodMeta.label} P/L`,
                         data: series.map(s => s.balance),
                         borderColor: '#00f0a8',
                         backgroundColor: zeroAnchoredGradient,
@@ -7378,15 +7533,15 @@ function initEarningsPage() {
                         pointBorderColor: '#0b0b0d',
                         pointBorderWidth: 1
                     },
-                    {
+                    ...(milestoneLine != null ? [{
                         label: 'Milestone',
-                        data: series.map(() => target),
+                        data: series.map(() => milestoneLine),
                         borderColor: 'rgba(123,97,255,0.7)',
                         borderDash: [6, 4],
                         pointRadius: 0,
                         pointHitRadius: 0,
                         fill: false
-                    }
+                    }] : [])
                 ]
             },
             options: {
@@ -7415,7 +7570,7 @@ function initEarningsPage() {
         });
     }
 
-    const history = getMonthlyPlHistory();
+    const history = getMonthlyPlHistory(periodKey === 'all' ? trades : periodTrades);
     const histCtx = document.getElementById('earnHistoryChart');
     if (histCtx) {
         destroyChartInstance(earnHistoryChart);
