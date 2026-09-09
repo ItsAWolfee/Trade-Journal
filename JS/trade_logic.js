@@ -21,8 +21,81 @@
     window.addEventListener('resize', applyViewport);
 })();
 
-// Persistence Logic: Load trades from localStorage
-let trades = JSON.parse(localStorage.getItem('tradeJournalData')) || [];
+// Persistence Logic: dual accounts (live + paper)
+const ACCOUNT_MODE_KEY = 'tradeJournalAccountMode';
+const LIVE_TRADES_KEY = 'tradeJournalData';
+const PAPER_TRADES_KEY = 'tradeJournalPaperData';
+const LIVE_DEPOSITS_KEY = 'tradeJournalDeposits';
+const PAPER_DEPOSITS_KEY = 'tradeJournalPaperDeposits';
+
+function getAccountMode() {
+    return localStorage.getItem(ACCOUNT_MODE_KEY) === 'paper' ? 'paper' : 'live';
+}
+
+function isPaperAccount() {
+    return getAccountMode() === 'paper';
+}
+
+function getThemeAccentHex() {
+    return isPaperAccount() ? '#ff9800' : '#7b61ff';
+}
+
+function getThemeAccentRgba(alpha = 1) {
+    return isPaperAccount()
+        ? `rgba(255, 152, 0, ${alpha})`
+        : `rgba(123, 97, 255, ${alpha})`;
+}
+
+function tradesStorageKey(mode = getAccountMode()) {
+    return mode === 'paper' ? PAPER_TRADES_KEY : LIVE_TRADES_KEY;
+}
+
+function depositsStorageKey(mode = getAccountMode()) {
+    return mode === 'paper' ? PAPER_DEPOSITS_KEY : LIVE_DEPOSITS_KEY;
+}
+
+function readTradesFromStorage(mode = getAccountMode()) {
+    try {
+        const list = JSON.parse(localStorage.getItem(tradesStorageKey(mode)) || '[]');
+        return Array.isArray(list) ? list : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function migratePaperTradesOnce() {
+    if (localStorage.getItem('tradeJournalPaperMigrated')) return;
+    try {
+        const live = JSON.parse(localStorage.getItem(LIVE_TRADES_KEY) || '[]');
+        if (!Array.isArray(live) || !live.length) {
+            localStorage.setItem('tradeJournalPaperMigrated', '1');
+            return;
+        }
+        const paperish = live.filter(t => t && (t.isPaper || t.strategy === 'Paper Trading'));
+        if (paperish.length) {
+            const existingPaper = readTradesFromStorage('paper');
+            const ids = new Set(existingPaper.map(t => t.id));
+            const merged = existingPaper.concat(paperish.filter(t => t.id && !ids.has(t.id)));
+            localStorage.setItem(PAPER_TRADES_KEY, JSON.stringify(merged));
+            localStorage.setItem(LIVE_TRADES_KEY, JSON.stringify(live.filter(t => !(t.isPaper || t.strategy === 'Paper Trading'))));
+        }
+    } catch (e) { /* ignore */ }
+    localStorage.setItem('tradeJournalPaperMigrated', '1');
+}
+
+migratePaperTradesOnce();
+
+// Apply paper theme class ASAP so purple→orange CSS vars take effect before paint settles
+if (typeof document !== 'undefined' && document.documentElement) {
+    const bootPaper = localStorage.getItem(ACCOUNT_MODE_KEY) === 'paper';
+    document.documentElement.classList.toggle('account-mode-paper', bootPaper);
+    if (document.body) document.body.classList.toggle('account-mode-paper', bootPaper);
+    else document.addEventListener('DOMContentLoaded', () => {
+        document.body.classList.toggle('account-mode-paper', localStorage.getItem(ACCOUNT_MODE_KEY) === 'paper');
+    }, { once: true });
+}
+
+let trades = readTradesFromStorage();
 
 // Ensure all trades have a unique ID for robust editing/deletion
 let tradesChanged = false;
@@ -36,14 +109,123 @@ trades = trades.map(t => {
 if (tradesChanged) saveTrades();
 
 function saveTrades() {
-    localStorage.setItem('tradeJournalData', JSON.stringify(trades));
+    localStorage.setItem(tradesStorageKey(), JSON.stringify(trades));
 }
 
-const ACCOUNT_DEPOSITS_KEY = 'tradeJournalDeposits';
+function loadTradesForActiveAccount() {
+    trades = readTradesFromStorage().map(t => {
+        if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
+        return t;
+    });
+}
+
+window.setAccountMode = function setAccountMode(mode) {
+    const next = mode === 'paper' ? 'paper' : 'live';
+    if (next === getAccountMode()) {
+        syncAccountSwitcherUI();
+        return;
+    }
+    localStorage.setItem(ACCOUNT_MODE_KEY, next);
+    loadTradesForActiveAccount();
+    document.documentElement.classList.toggle('account-mode-paper', next === 'paper');
+    document.body.classList.toggle('account-mode-paper', next === 'paper');
+    syncAccountSwitcherUI();
+    refreshAllViews();
+    showAlert(
+        next === 'paper'
+            ? 'Switched to Paper money — trades and deposits are separate from Live.'
+            : 'Switched to Live account.',
+        next === 'paper' ? 'Paper Account' : 'Live Account'
+    );
+};
+
+function syncAccountSwitcherUI() {
+    const mode = getAccountMode();
+    const isPaper = mode === 'paper';
+    document.documentElement.classList.toggle('account-mode-paper', isPaper);
+    document.body.classList.toggle('account-mode-paper', isPaper);
+    document.querySelectorAll('.account-switcher').forEach(root => {
+        root.classList.toggle('account-switcher--paper', isPaper);
+        const name = root.querySelector('.account-switcher-name');
+        const badge = root.querySelector('.account-switcher-badge');
+        const avatar = root.querySelector('.account-switcher-avatar');
+        if (name) name.textContent = isPaper ? 'Paper money' : 'Live account';
+        if (badge) badge.textContent = isPaper ? 'PAPER' : 'LIVE';
+        if (avatar) avatar.textContent = isPaper ? 'P' : 'L';
+        root.querySelectorAll('[data-account-mode]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.accountMode === mode);
+        });
+    });
+}
+
+function ensureAccountSwitcher() {
+    document.querySelectorAll('.top-header').forEach(header => {
+        if (header.querySelector('.account-switcher')) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'account-switcher';
+        wrap.innerHTML = `
+            <button type="button" class="account-switcher-btn" aria-haspopup="true" aria-expanded="false">
+                <span class="account-switcher-avatar">L</span>
+                <span class="account-switcher-meta">
+                    <span class="account-switcher-badge">LIVE</span>
+                    <span class="account-switcher-name">Live account</span>
+                </span>
+                <svg class="account-switcher-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="account-switcher-menu" hidden>
+                <button type="button" class="account-switcher-option" data-account-mode="live">
+                    <span class="account-switcher-option-avatar">L</span>
+                    <span>
+                        <strong>Live account</strong>
+                        <small>Real trades &amp; deposits</small>
+                    </span>
+                </button>
+                <button type="button" class="account-switcher-option" data-account-mode="paper">
+                    <span class="account-switcher-option-avatar account-switcher-option-avatar--paper">P</span>
+                    <span>
+                        <strong>Paper money</strong>
+                        <small>Practice account</small>
+                    </span>
+                </button>
+            </div>
+        `;
+        header.appendChild(wrap);
+
+        const btn = wrap.querySelector('.account-switcher-btn');
+        const menu = wrap.querySelector('.account-switcher-menu');
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const open = menu.hidden;
+            document.querySelectorAll('.account-switcher-menu').forEach(m => { m.hidden = true; });
+            document.querySelectorAll('.account-switcher-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+            menu.hidden = !open;
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        wrap.querySelectorAll('[data-account-mode]').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                menu.hidden = true;
+                btn.setAttribute('aria-expanded', 'false');
+                setAccountMode(opt.dataset.accountMode);
+            });
+        });
+    });
+
+    if (!ensureAccountSwitcher._docBound) {
+        ensureAccountSwitcher._docBound = true;
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.account-switcher-menu').forEach(m => { m.hidden = true; });
+            document.querySelectorAll('.account-switcher-btn').forEach(b => b.setAttribute('aria-expanded', 'false'));
+        });
+    }
+    syncAccountSwitcherUI();
+}
+
+const ACCOUNT_DEPOSITS_KEY = LIVE_DEPOSITS_KEY; // legacy alias
 
 function getDeposits() {
     try {
-        const list = JSON.parse(localStorage.getItem(ACCOUNT_DEPOSITS_KEY) || '[]');
+        const list = JSON.parse(localStorage.getItem(depositsStorageKey()) || '[]');
         return Array.isArray(list) ? list : [];
     } catch (e) {
         return [];
@@ -51,7 +233,7 @@ function getDeposits() {
 }
 
 function saveDeposits(list) {
-    localStorage.setItem(ACCOUNT_DEPOSITS_KEY, JSON.stringify(list));
+    localStorage.setItem(depositsStorageKey(), JSON.stringify(list));
 }
 
 function addDeposit({ date, amount, note }) {
@@ -122,13 +304,17 @@ function getAccountBalanceSeries() {
 
 function getJournalBackupPayload() {
     return {
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
-        trades: JSON.parse(localStorage.getItem('tradeJournalData') || '[]'),
+        accountMode: getAccountMode(),
+        trades: readTradesFromStorage('live'),
+        paperTrades: readTradesFromStorage('paper'),
         watchlist: JSON.parse(localStorage.getItem('tradeJournalWatchlist') || 'null'),
         tradingNotes: localStorage.getItem('tradingNotes') || '',
-        deposits: getDeposits(),
-        earningsGoals: getEarningsGoals()
+        deposits: JSON.parse(localStorage.getItem(LIVE_DEPOSITS_KEY) || '[]'),
+        paperDeposits: JSON.parse(localStorage.getItem(PAPER_DEPOSITS_KEY) || '[]'),
+        earningsGoals: JSON.parse(localStorage.getItem('tradeJournalEarningsGoals') || 'null'),
+        paperEarningsGoals: JSON.parse(localStorage.getItem('tradeJournalPaperEarningsGoals') || 'null')
     };
 }
 
@@ -137,11 +323,20 @@ function applyJournalBackup(payload) {
         throw new Error('Invalid backup file');
     }
 
-    trades = payload.trades.map(t => {
+    const normalize = (list) => (list || []).map(t => {
         if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
         return t;
     });
-    saveTrades();
+
+    localStorage.setItem(LIVE_TRADES_KEY, JSON.stringify(normalize(payload.trades)));
+    if (Array.isArray(payload.paperTrades)) {
+        localStorage.setItem(PAPER_TRADES_KEY, JSON.stringify(normalize(payload.paperTrades)));
+    }
+    if (payload.accountMode === 'paper' || payload.accountMode === 'live') {
+        localStorage.setItem(ACCOUNT_MODE_KEY, payload.accountMode);
+    }
+
+    loadTradesForActiveAccount();
 
     if (payload.watchlist) {
         localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
@@ -150,15 +345,22 @@ function applyJournalBackup(payload) {
         localStorage.setItem('tradingNotes', payload.tradingNotes);
     }
     if (Array.isArray(payload.deposits)) {
-        saveDeposits(payload.deposits);
+        localStorage.setItem(LIVE_DEPOSITS_KEY, JSON.stringify(payload.deposits));
+    }
+    if (Array.isArray(payload.paperDeposits)) {
+        localStorage.setItem(PAPER_DEPOSITS_KEY, JSON.stringify(payload.paperDeposits));
     }
     if (payload.earningsGoals && typeof payload.earningsGoals === 'object') {
-        saveEarningsGoals({ ...DEFAULT_EARNINGS_GOALS, ...payload.earningsGoals });
+        localStorage.setItem('tradeJournalEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.earningsGoals }));
+    }
+    if (payload.paperEarningsGoals && typeof payload.paperEarningsGoals === 'object') {
+        localStorage.setItem('tradeJournalPaperEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.paperEarningsGoals }));
     }
 
     syncStocklistDatalists();
     renderWatchlistPanel();
     populateSymbolFilter();
+    syncAccountSwitcherUI();
     refreshAllViews();
 }
 
@@ -234,19 +436,29 @@ async function githubApi(path, options = {}) {
 
 function applyRemoteJournalPayload(payload, stamp, render = true) {
     if (!payload || !Array.isArray(payload.trades)) return false;
-    trades = payload.trades.map(t => {
+    const normalize = (list) => (list || []).map(t => {
         if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
         return t;
     });
-    localStorage.setItem('tradeJournalData', JSON.stringify(trades));
+    localStorage.setItem(LIVE_TRADES_KEY, JSON.stringify(normalize(payload.trades)));
+    if (Array.isArray(payload.paperTrades)) {
+        localStorage.setItem(PAPER_TRADES_KEY, JSON.stringify(normalize(payload.paperTrades)));
+    }
+    if (Array.isArray(payload.deposits)) {
+        localStorage.setItem(LIVE_DEPOSITS_KEY, JSON.stringify(payload.deposits));
+    }
+    if (Array.isArray(payload.paperDeposits)) {
+        localStorage.setItem(PAPER_DEPOSITS_KEY, JSON.stringify(payload.paperDeposits));
+    }
+    loadTradesForActiveAccount();
     if (payload.watchlist) localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
     if (typeof payload.tradingNotes === 'string') localStorage.setItem('tradingNotes', payload.tradingNotes);
-    if (Array.isArray(payload.deposits)) saveDeposits(payload.deposits);
     if (stamp) localStorage.setItem(SYNC_MARKER_KEY, stamp);
     if (render) {
         syncStocklistDatalists();
         renderWatchlistPanel();
         populateSymbolFilter();
+        syncAccountSwitcherUI();
         refreshAllViews();
     }
     return true;
@@ -1549,10 +1761,10 @@ function initPerformanceCharts() {
                 labels: metrics.labels,
                 datasets: [{
                     data: metrics.values,
-                    backgroundColor: 'rgba(123, 97, 255, 0.35)',
-                    borderColor: 'rgba(123, 97, 255, 0.9)',
+                    backgroundColor: getThemeAccentRgba(0.35),
+                    borderColor: getThemeAccentRgba(0.9),
                     borderWidth: 2,
-                    pointBackgroundColor: '#7b61ff',
+                    pointBackgroundColor: getThemeAccentHex(),
                     pointRadius: 3,
                     pointHoverRadius: 6,
                     pointHitRadius: 12
@@ -6392,6 +6604,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderSidebar();
     applySavedTheme();
     applyPageHeader();
+    ensureAccountSwitcher();
     injectScreenshotButton();
     initTradeFilterUI();
     initTradeModalBackdropClose();
@@ -6543,7 +6756,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 exitPrice: exitPrice,
                 endTime: endStr,
                 notes: notes,
-                imageDataUrl: imageDataUrl
+                imageDataUrl: imageDataUrl,
+                isPaper: isPaperAccount(),
+                strategy: isPaperAccount() ? 'Paper Trading' : (editingIndex > -1 ? trades[editingIndex].strategy : undefined)
             };
 
             if (editingIndex > -1) {
@@ -7102,7 +7317,12 @@ function shiftWeekdayDate(dateStr, direction) {
 }
 
 // ---- Earnings page ----
-const EARNINGS_GOALS_KEY = 'tradeJournalEarningsGoals';
+const EARNINGS_GOALS_KEY_LIVE = 'tradeJournalEarningsGoals';
+const EARNINGS_GOALS_KEY_PAPER = 'tradeJournalPaperEarningsGoals';
+function earningsGoalsStorageKey() {
+    return isPaperAccount() ? EARNINGS_GOALS_KEY_PAPER : EARNINGS_GOALS_KEY_LIVE;
+}
+const EARNINGS_GOALS_KEY = EARNINGS_GOALS_KEY_LIVE; // legacy default
 const DEFAULT_EARNINGS_GOALS = {
     allTimeTarget: null,
     paceDaily: null,
@@ -7123,7 +7343,7 @@ let earnHistoryChart = null;
 
 function getEarningsGoals() {
     try {
-        const raw = JSON.parse(localStorage.getItem(EARNINGS_GOALS_KEY) || 'null');
+        const raw = JSON.parse(localStorage.getItem(earningsGoalsStorageKey()) || 'null');
         return { ...DEFAULT_EARNINGS_GOALS, ...(raw || {}) };
     } catch (e) {
         return { ...DEFAULT_EARNINGS_GOALS };
@@ -7131,7 +7351,7 @@ function getEarningsGoals() {
 }
 
 function saveEarningsGoals(goals) {
-    localStorage.setItem(EARNINGS_GOALS_KEY, JSON.stringify(goals));
+    localStorage.setItem(earningsGoalsStorageKey(), JSON.stringify(goals));
 }
 
 function niceEarningsMilestone(val) {
@@ -7321,7 +7541,7 @@ function renderEarningsGoalRing(el, pct) {
     el.innerHTML = `
         <svg viewBox="0 0 90 90">
             <circle cx="45" cy="45" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="8"/>
-            <circle cx="45" cy="45" r="${r}" fill="none" stroke="${p >= 100 ? '#00f0a8' : '#7b61ff'}" stroke-width="8"
+            <circle cx="45" cy="45" r="${r}" fill="none" stroke="${p >= 100 ? '#00f0a8' : getThemeAccentHex()}" stroke-width="8"
                 stroke-linecap="round" stroke-dasharray="${filled} ${circ}"
                 transform="rotate(-90 45 45)"/>
             <text x="45" y="50" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">${Math.round(p)}%</text>
@@ -7536,7 +7756,7 @@ function initEarningsPage() {
                     ...(milestoneLine != null ? [{
                         label: 'Milestone',
                         data: series.map(() => milestoneLine),
-                        borderColor: 'rgba(123,97,255,0.7)',
+                        borderColor: getThemeAccentRgba(0.7),
                         borderDash: [6, 4],
                         pointRadius: 0,
                         pointHitRadius: 0,
@@ -7592,7 +7812,7 @@ function initEarningsPage() {
                         label: 'Milestone',
                         type: 'line',
                         data: history.map(() => target),
-                        borderColor: 'rgba(123,97,255,0.8)',
+                        borderColor: getThemeAccentRgba(0.8),
                         borderDash: [6, 4],
                         pointRadius: 0,
                         fill: false
@@ -7689,8 +7909,8 @@ function initReports() {
             datasets: [{
                 label: 'Account balance',
                 data: equityData.length > 0 ? equityData : [0],
-                borderColor: '#7b61ff',
-                backgroundColor: 'rgba(123, 97, 255, 0.1)',
+                borderColor: getThemeAccentHex(),
+                backgroundColor: getThemeAccentRgba(0.1),
                 fill: true,
                 tension: 0.3,
                 pointRadius: 4
