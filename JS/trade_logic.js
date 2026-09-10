@@ -2284,21 +2284,29 @@ function populateCalendar() {
                     <div class="cell-trade-info" style="text-align: center; opacity: 0.9; font-size: 0.7rem; font-weight: 700; color: ${tradeCount === 1 ? dayColor : 'inherit'}">${displayLabel} / ${dailyWinRate}%</div>
                 `;
             } else if (hasDeposit) {
-                cell.classList.add('day-cell--deposit');
+                // Deposit/withdrawal-only day — same tint language as trade cells
+                if (dayDeposit > 0) {
+                    cell.style.background = 'rgba(0, 240, 168, 0.1)';
+                    cell.style.border = '1.5px solid rgba(0, 240, 168, 0.35)';
+                } else {
+                    cell.style.background = 'rgba(255, 77, 109, 0.1)';
+                    cell.style.border = '1.5px solid rgba(255, 77, 109, 0.35)';
+                }
             }
 
             if (hasDeposit) {
                 const depLabel = dayDeposit > 0 ? 'Deposit' : 'Withdrawal';
-                const depColor = dayDeposit > 0 ? 'var(--accent-secondary)' : 'var(--loss-red)';
+                const depColor = profitColor(dayDeposit);
                 cell.innerHTML += `
-                    <div class="cell-deposit" title="${depLabel} ${formatSignedMoney(dayDeposit)}">
-                        <span class="cell-deposit-label">${depLabel}</span>
-                        <span class="cell-deposit-amt" style="color:${depColor}">${formatSignedMoney(dayDeposit)}</span>
+                    <div class="cell-deposit">
+                        <div class="cell-profit-val cell-deposit-amt" style="color:${depColor}">${formatProfit(dayDeposit)}</div>
+                        <div style="width: 30%; height: 2px; background: ${depColor}; margin: 6px auto; border-radius: 1px; opacity: 0.8;"></div>
+                        <div class="cell-trade-info cell-deposit-label" style="color:${depColor}">${depLabel}</div>
                     </div>
                 `;
                 const tipParts = [];
                 if (tradeCount > 0) tipParts.push(`${tradeCount} trade${tradeCount === 1 ? '' : 's'}: ${formatProfit(dailyProfit)}`);
-                tipParts.push(`${depLabel}: ${formatSignedMoney(dayDeposit)}`);
+                tipParts.push(`${depLabel}: ${formatProfit(dayDeposit)}`);
                 cell.title = `${formatTradeDate(dateStr)} · ${tipParts.join(' · ')}`;
             }
 
@@ -2319,7 +2327,7 @@ function populateCalendar() {
         const summaryCell = document.createElement('div');
         summaryCell.className = 'day-cell weekly-summary';
         const weekDepLine = weekDepositTotal !== 0
-            ? `<div class="week-deposit">${weekDepositTotal > 0 ? 'Dep' : 'Wdr'} ${formatSignedMoney(weekDepositTotal)}</div>`
+            ? `<div class="week-deposit" style="color:${profitColor(weekDepositTotal)}">${weekDepositTotal > 0 ? 'Deposit' : 'Withdrawal'} ${formatProfit(weekDepositTotal)}</div>`
             : '';
         summaryCell.innerHTML = `
             <div class="week-label">Week ${weekLabelNum}</div>
@@ -2341,9 +2349,12 @@ function populateCalendar() {
     const monthlyTrades = document.getElementById('monthlyTradesDisplay');
     if (monthlyTrades) {
         const tradePart = `${monthTradeCount} ${monthTradeCount === 1 ? 'trade' : 'trades'}`;
-        monthlyTrades.textContent = monthDepositTotal !== 0
-            ? `${tradePart} · ${monthDepositTotal > 0 ? 'Dep' : 'Wdr'} ${formatSignedMoney(monthDepositTotal)}`
-            : tradePart;
+        if (monthDepositTotal !== 0) {
+            const depPart = `${monthDepositTotal > 0 ? 'Deposit' : 'Withdrawal'} ${formatProfit(monthDepositTotal)}`;
+            monthlyTrades.innerHTML = `${tradePart} · <span style="color:${profitColor(monthDepositTotal)}">${depPart}</span>`;
+        } else {
+            monthlyTrades.textContent = tradePart;
+        }
     }
 }
 
