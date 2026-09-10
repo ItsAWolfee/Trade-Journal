@@ -2128,6 +2128,43 @@ body {
     border: 1px solid var(--accent-primary);
 }
 
+.cell-deposit {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    margin-top: 6px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(var(--accent-primary-rgb), 0.1);
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.22);
+    line-height: 1.15;
+}
+
+.cell-deposit-label {
+    font-size: 0.58rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.cell-deposit-amt {
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.day-cell--deposit {
+    background: rgba(var(--accent-primary-rgb), 0.05);
+    border: 1px solid rgba(var(--accent-primary-rgb), 0.18);
+}
+
+.week-deposit {
+    margin-top: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--accent-secondary);
+}
 
 .trade-dot {
     width: 6px;

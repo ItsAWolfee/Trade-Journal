@@ -2181,6 +2181,13 @@ function populateCalendar() {
     const lastPos = (daysInMonth - 1) + mondayFirstDay;
     const totalWeeks = Math.floor(lastPos / 7) + 1;
 
+    // Deposits keyed by YYYY-MM-DD for this account
+    const depositsByDate = {};
+    getDeposits().forEach(d => {
+        if (!d?.date) return;
+        depositsByDate[d.date] = (depositsByDate[d.date] || 0) + (Number(d.amount) || 0);
+    });
+
     const buildEmptyCell = () => {
         const div = document.createElement('div');
         div.className = 'day-cell empty';
@@ -2190,10 +2197,12 @@ function populateCalendar() {
     let weekLabelNum = 0;
     let monthTotal = 0;
     let monthTradeCount = 0;
+    let monthDepositTotal = 0;
     for (let w = 0; w < totalWeeks; w++) {
         const weekCells = [];
         let weekTotal = 0;
         let weekTradeCount = 0;
+        let weekDepositTotal = 0;
         let weekHasDay = false;
 
         // Only Mon-Fri (columns 0-4); Sat/Sun (5-6) are omitted entirely
@@ -2235,10 +2244,14 @@ function populateCalendar() {
             const tradeCount = dayTrades.length;
             const dailyWins = dayTrades.filter(t => getNetProfit(t) >= 0).length;
             const dailyWinRate = tradeCount > 0 ? (dailyWins / tradeCount * 100).toFixed(1) : 0;
+            const dayDeposit = depositsByDate[dateStr] || 0;
+            const hasDeposit = dayDeposit !== 0;
 
             weekTotal += dailyProfit;
             weekTradeCount += tradeCount;
+            weekDepositTotal += dayDeposit;
             monthTradeCount += tradeCount;
+            monthDepositTotal += dayDeposit;
 
             cell.innerHTML = `<span class="day-num">${d}</span>`;
             cell.onclick = () => {
@@ -2270,10 +2283,27 @@ function populateCalendar() {
                     <div style="width: 30%; height: 2px; background: ${dayColor}; margin: 6px auto; border-radius: 1px; opacity: 0.8;"></div>
                     <div class="cell-trade-info" style="text-align: center; opacity: 0.9; font-size: 0.7rem; font-weight: 700; color: ${tradeCount === 1 ? dayColor : 'inherit'}">${displayLabel} / ${dailyWinRate}%</div>
                 `;
+            } else if (hasDeposit) {
+                cell.classList.add('day-cell--deposit');
+            }
+
+            if (hasDeposit) {
+                const depLabel = dayDeposit > 0 ? 'Deposit' : 'Withdrawal';
+                const depColor = dayDeposit > 0 ? 'var(--accent-secondary)' : 'var(--loss-red)';
+                cell.innerHTML += `
+                    <div class="cell-deposit" title="${depLabel} ${formatSignedMoney(dayDeposit)}">
+                        <span class="cell-deposit-label">${depLabel}</span>
+                        <span class="cell-deposit-amt" style="color:${depColor}">${formatSignedMoney(dayDeposit)}</span>
+                    </div>
+                `;
+                const tipParts = [];
+                if (tradeCount > 0) tipParts.push(`${tradeCount} trade${tradeCount === 1 ? '' : 's'}: ${formatProfit(dailyProfit)}`);
+                tipParts.push(`${depLabel}: ${formatSignedMoney(dayDeposit)}`);
+                cell.title = `${formatTradeDate(dateStr)} · ${tipParts.join(' · ')}`;
             }
 
             if (d === today.getDate() && currentMonth === today.getMonth() && currentYear === today.getFullYear()) {
-                if (tradeCount === 0) cell.classList.add('today');
+                if (tradeCount === 0 && !hasDeposit) cell.classList.add('today');
             }
 
             weekCells.push(cell);
@@ -2288,12 +2318,16 @@ function populateCalendar() {
         weekLabelNum++;
         const summaryCell = document.createElement('div');
         summaryCell.className = 'day-cell weekly-summary';
+        const weekDepLine = weekDepositTotal !== 0
+            ? `<div class="week-deposit">${weekDepositTotal > 0 ? 'Dep' : 'Wdr'} ${formatSignedMoney(weekDepositTotal)}</div>`
+            : '';
         summaryCell.innerHTML = `
             <div class="week-label">Week ${weekLabelNum}</div>
             <div class="week-profit" style="color: ${profitColor(weekTotal)}">
                 ${formatProfit(weekTotal)}
             </div>
             <div class="week-days">${weekTradeCount} ${weekTradeCount === 1 ? 'trade' : 'trades'}</div>
+            ${weekDepLine}
         `;
         calendarGrid.appendChild(summaryCell);
     }
@@ -2306,7 +2340,10 @@ function populateCalendar() {
     }
     const monthlyTrades = document.getElementById('monthlyTradesDisplay');
     if (monthlyTrades) {
-        monthlyTrades.textContent = `${monthTradeCount} ${monthTradeCount === 1 ? 'trade' : 'trades'}`;
+        const tradePart = `${monthTradeCount} ${monthTradeCount === 1 ? 'trade' : 'trades'}`;
+        monthlyTrades.textContent = monthDepositTotal !== 0
+            ? `${tradePart} · ${monthDepositTotal > 0 ? 'Dep' : 'Wdr'} ${formatSignedMoney(monthDepositTotal)}`
+            : tradePart;
     }
 }
 
