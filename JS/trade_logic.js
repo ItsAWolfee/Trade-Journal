@@ -108,8 +108,124 @@ trades = trades.map(t => {
 });
 if (tradesChanged) saveTrades();
 
+function isQuotaExceededError(err) {
+    if (!err) return false;
+    return err.name === 'QuotaExceededError'
+        || err.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+        || err.code === 22
+        || err.code === 1014
+        || /quota/i.test(String(err.message || ''));
+}
+
+function estimateDataUrlBytes(dataUrl) {
+    if (!dataUrl || typeof dataUrl !== 'string') return 0;
+    const comma = dataUrl.indexOf(',');
+    const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+    return Math.floor(b64.length * 0.75);
+}
+
+/** Resize/re-encode chart screenshots so they fit in localStorage. */
+function compressImageDataUrl(dataUrl, maxWidth = 1280, quality = 0.72) {
+    return new Promise((resolve) => {
+        if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) {
+            resolve(dataUrl || '');
+            return;
+        }
+        // Already small enough — keep as-is
+        if (estimateDataUrlBytes(dataUrl) < 180 * 1024) {
+            resolve(dataUrl);
+            return;
+        }
+        const img = new Image();
+        img.onload = () => {
+            try {
+                const scale = Math.min(1, maxWidth / Math.max(img.width, 1));
+                const w = Math.max(1, Math.round(img.width * scale));
+                const h = Math.max(1, Math.round(img.height * scale));
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#131722';
+                ctx.fillRect(0, 0, w, h);
+                ctx.drawImage(img, 0, 0, w, h);
+                let out = canvas.toDataURL('image/jpeg', quality);
+                // Still huge? push quality down once more
+                if (estimateDataUrlBytes(out) > 350 * 1024) {
+                    out = canvas.toDataURL('image/jpeg', 0.55);
+                }
+                resolve(out);
+            } catch (e) {
+                resolve(dataUrl);
+            }
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+    });
+}
+
+async function compressTradesImagesInPlace(list, maxWidth = 1100, quality = 0.65) {
+    let changed = 0;
+    for (const t of list) {
+        if (!t?.imageDataUrl || estimateDataUrlBytes(t.imageDataUrl) < 220 * 1024) continue;
+        const next = await compressImageDataUrl(t.imageDataUrl, maxWidth, quality);
+        if (next && next !== t.imageDataUrl) {
+            t.imageDataUrl = next;
+            changed++;
+        }
+    }
+    return changed;
+}
+
+function stripOldestTradeImages(list, keepNewestWithImages = 8) {
+    const withImages = list
+        .map((t, i) => ({ t, i, bytes: estimateDataUrlBytes(t.imageDataUrl) }))
+        .filter(x => x.bytes > 0)
+        .sort((a, b) => b.i - a.i); // newest first by array position
+    let removed = 0;
+    withImages.forEach((item, rank) => {
+        if (rank >= keepNewestWithImages) {
+            item.t.imageDataUrl = '';
+            removed++;
+        }
+    });
+    return removed;
+}
+
 function saveTrades() {
-    localStorage.setItem(tradesStorageKey(), JSON.stringify(trades));
+    const key = tradesStorageKey();
+    const write = () => localStorage.setItem(key, JSON.stringify(trades));
+    try {
+        write();
+        return true;
+    } catch (err) {
+        if (!isQuotaExceededError(err)) throw err;
+    }
+
+    // Sync recovery: drop oldest chart screenshots until the write fits
+    let kept = 12;
+    while (kept >= 0) {
+        stripOldestTradeImages(trades, kept);
+        try {
+            write();
+            if (typeof showAlert === 'function') {
+                showAlert(
+                    kept === 0
+                        ? 'Storage was full — chart screenshots were cleared so your trade could still save. Numbers and notes are intact.'
+                        : 'Storage was full — some older chart screenshots were removed so your trade could save.',
+                    'Storage Full'
+                );
+            }
+            return true;
+        } catch (err2) {
+            if (!isQuotaExceededError(err2)) throw err2;
+            kept -= 3;
+        }
+    }
+    if (typeof showAlert === 'function') {
+        showAlert('Browser storage is completely full. Delete some old paper trades, then try again.', 'Storage Full');
+    }
+    return false;
 }
 
 function loadTradesForActiveAccount() {
@@ -605,12 +721,13 @@ window.handleTradeImageUpload = function (event, areaId, previewId) {
     const file = event.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = function (e) {
+    reader.onload = async function (e) {
         const area = document.getElementById(areaId);
         const preview = document.getElementById(previewId);
         const previewImg = document.getElementById(previewId + 'Img');
         const placeholder = area ? area.querySelector('[id$="Placeholder"]') : null;
-        if (previewImg) previewImg.src = e.target.result;
+        const compressed = await compressImageDataUrl(e.target.result, 1280, 0.72);
+        if (previewImg) previewImg.src = compressed;
         if (preview) preview.style.display = 'block';
         if (placeholder) placeholder.style.display = 'none';
         if (area) area.style.borderColor = 'rgba(0,242,254,0.7)';
@@ -6657,6 +6774,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     initTradeFilterUI();
     initTradeModalBackdropClose();
 
+    // Shrink any oversized screenshots already sitting in storage
+    try {
+        const changed = await compressTradesImagesInPlace(trades, 1200, 0.68);
+        if (changed > 0) saveTrades();
+    } catch (e) { /* ignore */ }
+
     await syncJournalFromRepo();
 
     initInfoTooltips();
@@ -6744,7 +6867,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const tradeForm = document.getElementById('tradeForm');
     if (tradeForm && !tradeForm.dataset.listenerSet) {
         tradeForm.dataset.listenerSet = 'true';
-        tradeForm.addEventListener('submit', (e) => {
+        tradeForm.addEventListener('submit', async (e) => {
             e.preventDefault();
 
             const symbol = document.getElementById('symbolInput').value.toUpperCase();
@@ -6779,16 +6902,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             const notes = document.getElementById('notesInput')?.value || "";
 
             // Capture image: use existing if editing and no new image selected
-            const imageInput = document.getElementById('tradeImageInput');
             const previewImg = document.getElementById('imagePreviewImg');
             let imageDataUrl = (previewImg && previewImg.src && !previewImg.src.endsWith(window.location.href)) ? previewImg.src : '';
             // If no new upload but editing, preserve existing
             if (!imageDataUrl && editingIndex > -1 && trades[editingIndex].imageDataUrl) {
                 imageDataUrl = trades[editingIndex].imageDataUrl;
             }
+            if (imageDataUrl) {
+                imageDataUrl = await compressImageDataUrl(imageDataUrl, 1280, 0.72);
+                if (previewImg) previewImg.src = imageDataUrl;
+            }
 
+            const wasEditing = editingIndex > -1;
+            const previousTrade = wasEditing ? { ...trades[editingIndex] } : null;
             const tradeObj = {
-                id: editingIndex > -1 ? trades[editingIndex].id : Date.now() + Math.random().toString(36).substr(2, 9),
+                id: wasEditing ? trades[editingIndex].id : Date.now() + Math.random().toString(36).substr(2, 9),
                 date: logDate,
                 symbol: symbol,
                 profit: profitVal,
@@ -6806,17 +6934,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                 notes: notes,
                 imageDataUrl: imageDataUrl,
                 isPaper: isPaperAccount(),
-                strategy: isPaperAccount() ? 'Paper Trading' : (editingIndex > -1 ? trades[editingIndex].strategy : undefined)
+                strategy: isPaperAccount() ? 'Paper Trading' : (wasEditing ? trades[editingIndex].strategy : undefined)
             };
 
-            if (editingIndex > -1) {
+            if (wasEditing) {
                 trades[editingIndex] = tradeObj;
                 editingIndex = -1;
             } else {
                 trades.push(tradeObj);
             }
 
-            saveTrades();
+            const saved = saveTrades();
+            if (!saved) {
+                if (wasEditing && previousTrade) {
+                    const idx = trades.findIndex(t => t.id === tradeObj.id);
+                    if (idx >= 0) trades[idx] = previousTrade;
+                } else {
+                    trades = trades.filter(t => t.id !== tradeObj.id);
+                }
+                return;
+            }
             refreshAllViews();
             showAlert('Your trade journal has been updated!', 'Success');
             closeModal();
