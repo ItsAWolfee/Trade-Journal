@@ -652,6 +652,51 @@ function applyRemoteJournalPayload(payload, stamp, render = true) {
     return true;
 }
 
+function encodeGithubFileContent(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+}
+
+function stripTradeImagesForSync(list) {
+    return (list || []).map(t => {
+        if (!t?.imageDataUrl) return t;
+        return { ...t, imageDataUrl: '' };
+    });
+}
+
+/** Build sync payload; drop chart screenshots if the file would be huge. */
+function getJournalSyncPayload() {
+    const payload = getJournalBackupPayload();
+    const raw = JSON.stringify(payload);
+    // GitHub Contents API gets flaky / slow with multi‑MB JSON (base64 screenshots)
+    if (raw.length <= 3_500_000) return { payload, imagesStripped: false };
+    return {
+        payload: {
+            ...payload,
+            trades: stripTradeImagesForSync(payload.trades),
+            paperTrades: stripTradeImagesForSync(payload.paperTrades),
+            imagesStripped: true
+        },
+        imagesStripped: true
+    };
+}
+
+async function fetchJournalFileSha() {
+    const filePath = `/repos/${GITHUB_SYNC.owner}/${GITHUB_SYNC.repo}/contents/${GITHUB_SYNC.path}`;
+    try {
+        const existing = await githubApi(`${filePath}?ref=${encodeURIComponent(GITHUB_SYNC.branch)}`);
+        return existing.sha || null;
+    } catch (e) {
+        if (String(e.message || '').includes('404')) return null;
+        throw e;
+    }
+}
+
 // Push current browser data to GitHub — one click, no manual export.
 window.pushJournalToGithub = async function pushJournalToGithub() {
     if (!getGithubToken()) {
@@ -660,28 +705,39 @@ window.pushJournalToGithub = async function pushJournalToGithub() {
         return;
     }
     try {
-        const payload = getJournalBackupPayload();
-        const content = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+        const { payload, imagesStripped } = getJournalSyncPayload();
+        const content = encodeGithubFileContent(JSON.stringify(payload, null, 2));
         const filePath = `/repos/${GITHUB_SYNC.owner}/${GITHUB_SYNC.repo}/contents/${GITHUB_SYNC.path}`;
-        let sha;
-        try {
-            const existing = await githubApi(`${filePath}?ref=${GITHUB_SYNC.branch}`);
-            sha = existing.sha;
-        } catch (e) {
-            if (!String(e.message).includes('404')) throw e;
+
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 4; attempt++) {
+            const sha = await fetchJournalFileSha();
+            try {
+                await githubApi(filePath, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: `Sync journal data (${payload.exportedAt})`,
+                        content,
+                        branch: GITHUB_SYNC.branch,
+                        ...(sha ? { sha } : {})
+                    })
+                });
+                localStorage.setItem(SYNC_MARKER_KEY, payload.exportedAt);
+                const extra = imagesStripped
+                    ? ' Chart screenshots were skipped to keep the sync file small — trade numbers still synced.'
+                    : '';
+                showAlert(`Data is on GitHub.${extra} Open the site on your phone and tap Pull Latest (or refresh).`, 'Synced!');
+                return;
+            } catch (err) {
+                lastErr = err;
+                const msg = String(err.message || '');
+                // Stale SHA / concurrent edit — refetch and overwrite
+                if (/does not match/i.test(msg) && attempt < 4) continue;
+                throw err;
+            }
         }
-        await githubApi(filePath, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: `Sync journal data (${payload.exportedAt})`,
-                content,
-                branch: GITHUB_SYNC.branch,
-                ...(sha ? { sha } : {})
-            })
-        });
-        localStorage.setItem(SYNC_MARKER_KEY, payload.exportedAt);
-        showAlert('Data is on GitHub. Open the site on your phone and tap Pull Latest (or refresh).', 'Synced!');
+        throw lastErr || new Error('Could not push to GitHub.');
     } catch (err) {
         if (err.message === 'NO_TOKEN') {
             showAlert('Add your GitHub token in Settings first.', 'Token Needed');
