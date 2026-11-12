@@ -434,50 +434,122 @@ function getJournalBackupPayload() {
     };
 }
 
-function applyJournalBackup(payload) {
-    if (!payload || !Array.isArray(payload.trades)) {
-        throw new Error('Invalid backup file');
-    }
-
-    const normalize = (list) => (list || []).map(t => {
+function normalizeTradeList(list) {
+    return (list || []).map(t => {
         if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
         return t;
     });
+}
 
-    localStorage.setItem(LIVE_TRADES_KEY, JSON.stringify(normalize(payload.trades)));
-    if (Array.isArray(payload.paperTrades)) {
-        localStorage.setItem(PAPER_TRADES_KEY, JSON.stringify(normalize(payload.paperTrades)));
+function clearAccountStorage(mode) {
+    if (mode === 'paper') {
+        localStorage.removeItem(PAPER_TRADES_KEY);
+        localStorage.removeItem(PAPER_DEPOSITS_KEY);
+        localStorage.removeItem('tradeJournalPaperEarningsGoals');
+    } else {
+        localStorage.removeItem(LIVE_TRADES_KEY);
+        localStorage.removeItem(LIVE_DEPOSITS_KEY);
+        localStorage.removeItem('tradeJournalEarningsGoals');
     }
-    if (payload.accountMode === 'paper' || payload.accountMode === 'live') {
-        localStorage.setItem(ACCOUNT_MODE_KEY, payload.accountMode);
-    }
+}
 
+/** Clear trades/deposits for the account you are currently viewing (Live or Paper). */
+window.clearCurrentAccountData = async function clearCurrentAccountData() {
+    const mode = getAccountMode();
+    const label = mode === 'paper' ? 'Paper' : 'Live';
+    const other = mode === 'paper' ? 'Live' : 'Paper';
+    const count = readTradesFromStorage(mode).length;
+    const ok = await showConfirm(
+        `Delete all ${label} account data on this device (${count} trade${count === 1 ? '' : 's'} + deposits)?\n\nYour ${other} account will NOT be touched.`,
+        `Clear ${label} Data`
+    );
+    if (!ok) return;
+
+    clearAccountStorage(mode);
     loadTradesForActiveAccount();
-
-    if (payload.watchlist) {
-        localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
-    }
-    if (payload.tradingNotes) {
-        localStorage.setItem('tradingNotes', payload.tradingNotes);
-    }
-    if (Array.isArray(payload.deposits)) {
-        localStorage.setItem(LIVE_DEPOSITS_KEY, JSON.stringify(payload.deposits));
-    }
-    if (Array.isArray(payload.paperDeposits)) {
-        localStorage.setItem(PAPER_DEPOSITS_KEY, JSON.stringify(payload.paperDeposits));
-    }
-    if (payload.earningsGoals && typeof payload.earningsGoals === 'object') {
-        localStorage.setItem('tradeJournalEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.earningsGoals }));
-    }
-    if (payload.paperEarningsGoals && typeof payload.paperEarningsGoals === 'object') {
-        localStorage.setItem('tradeJournalPaperEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.paperEarningsGoals }));
-    }
-
     syncStocklistDatalists();
     renderWatchlistPanel();
     populateSymbolFilter();
     syncAccountSwitcherUI();
     refreshAllViews();
+    showAlert(`${label} account data cleared. ${other} account is unchanged.`, 'Cleared');
+};
+
+/**
+ * Apply a backup into a chosen destination.
+ * target: 'current' | 'live' | 'paper' | 'both'
+ * Never auto-switches Live/Paper mode (that was dumping people into Paper after import).
+ */
+function applyJournalBackup(payload, options = {}) {
+    if (!payload || (!Array.isArray(payload.trades) && !Array.isArray(payload.paperTrades))) {
+        throw new Error('Invalid backup file');
+    }
+
+    const targetRaw = String(options.target || 'current').toLowerCase().trim();
+    const target = ['current', 'live', 'paper', 'both'].includes(targetRaw) ? targetRaw : 'current';
+    const current = getAccountMode();
+
+    const liveList = Array.isArray(payload.trades) ? normalizeTradeList(payload.trades) : null;
+    const paperList = Array.isArray(payload.paperTrades) ? normalizeTradeList(payload.paperTrades) : null;
+    const liveDeposits = Array.isArray(payload.deposits) ? payload.deposits : null;
+    const paperDeposits = Array.isArray(payload.paperDeposits) ? payload.paperDeposits : null;
+
+    // Allow Live↔Paper: if importing into paper but backup only has live trades (or reverse), use that list
+    const sourceTradesFor = (dest) => {
+        if (dest === 'live') return liveList || paperList || [];
+        return paperList || liveList || [];
+    };
+    const sourceDepositsFor = (dest) => {
+        if (dest === 'live') return liveDeposits || paperDeposits || [];
+        return paperDeposits || liveDeposits || [];
+    };
+
+    if (target === 'both') {
+        if (liveList) localStorage.setItem(LIVE_TRADES_KEY, JSON.stringify(liveList));
+        if (paperList) localStorage.setItem(PAPER_TRADES_KEY, JSON.stringify(paperList));
+        else if (liveList && !paperList) {
+            // old/single-list backup: leave the other account alone unless only one list exists
+        }
+        if (liveDeposits) localStorage.setItem(LIVE_DEPOSITS_KEY, JSON.stringify(liveDeposits));
+        if (paperDeposits) localStorage.setItem(PAPER_DEPOSITS_KEY, JSON.stringify(paperDeposits));
+        if (payload.earningsGoals && typeof payload.earningsGoals === 'object') {
+            localStorage.setItem('tradeJournalEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.earningsGoals }));
+        }
+        if (payload.paperEarningsGoals && typeof payload.paperEarningsGoals === 'object') {
+            localStorage.setItem('tradeJournalPaperEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.paperEarningsGoals }));
+        }
+    } else {
+        const dest = target === 'current' ? current : target;
+        localStorage.setItem(tradesStorageKey(dest), JSON.stringify(sourceTradesFor(dest)));
+        localStorage.setItem(depositsStorageKey(dest), JSON.stringify(sourceDepositsFor(dest)));
+        if (dest === 'live' && payload.earningsGoals && typeof payload.earningsGoals === 'object') {
+            localStorage.setItem('tradeJournalEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...payload.earningsGoals }));
+        }
+        if (dest === 'paper') {
+            const goals = payload.paperEarningsGoals || payload.earningsGoals;
+            if (goals && typeof goals === 'object') {
+                localStorage.setItem('tradeJournalPaperEarningsGoals', JSON.stringify({ ...DEFAULT_EARNINGS_GOALS, ...goals }));
+            }
+        }
+    }
+
+    // Shared extras (not account-specific)
+    if (payload.watchlist) {
+        localStorage.setItem('tradeJournalWatchlist', JSON.stringify(payload.watchlist));
+    }
+    if (typeof payload.tradingNotes === 'string' && payload.tradingNotes) {
+        localStorage.setItem('tradingNotes', payload.tradingNotes);
+    }
+
+    // Stay on whatever account the user is viewing
+    loadTradesForActiveAccount();
+    syncStocklistDatalists();
+    renderWatchlistPanel();
+    populateSymbolFilter();
+    syncAccountSwitcherUI();
+    refreshAllViews();
+
+    return target === 'current' ? current : target;
 }
 
 window.exportJournalData = function exportJournalData() {
@@ -693,21 +765,40 @@ window.handleJournalImport = async function handleJournalImport(event) {
         const text = await file.text();
         const payload = JSON.parse(text);
 
-        const tradeCount = payload.trades?.length || 0;
-        const replace = tradeCount > 0
-            ? await showConfirm(
-                `Import ${tradeCount} trade${tradeCount === 1 ? '' : 's'}? This will replace your current journal data.`,
-                'Import Backup'
-            )
-            : true;
+        const liveCount = Array.isArray(payload.trades) ? payload.trades.length : 0;
+        const paperCount = Array.isArray(payload.paperTrades) ? payload.paperTrades.length : 0;
+        const total = liveCount + paperCount;
+        if (!total && !Array.isArray(payload.trades) && !Array.isArray(payload.paperTrades)) {
+            throw new Error('Invalid backup file');
+        }
 
+        const current = getAccountMode();
+        const destRaw = await showPrompt(
+            `Backup has ${liveCount} live + ${paperCount} paper trade(s).\n\nImport into which account?\nType one of:\n• current  (right now: ${current})\n• live\n• paper\n• both\n\nUse current to put Live data onto Paper (or reverse) without switching accounts.`,
+            'current',
+            'Import Destination'
+        );
+        if (destRaw == null) {
+            event.target.value = '';
+            return;
+        }
+        const dest = String(destRaw).toLowerCase().trim();
+        const target = ['current', 'live', 'paper', 'both'].includes(dest) ? dest : 'current';
+
+        const replace = await showConfirm(
+            target === 'both'
+                ? `Replace BOTH Live and Paper account data from this backup?`
+                : `Replace your ${target === 'current' ? current : target} account data with this backup? The other account stays as-is.`,
+            'Import Backup'
+        );
         if (!replace) {
             event.target.value = '';
             return;
         }
 
-        applyJournalBackup(payload);
-        showAlert(`Imported ${tradeCount} trade${tradeCount === 1 ? '' : 's'} successfully.`, 'Import Complete');
+        const applied = applyJournalBackup(payload, { target });
+        const label = applied === 'both' ? 'both accounts' : `${applied} account`;
+        showAlert(`Imported into ${label}. You stayed on ${current}.`, 'Import Complete');
     } catch (err) {
         console.error(err);
         showAlert('Could not read that file. Make sure it is a Trade Journal backup (.json).', 'Import Failed');
@@ -2804,11 +2895,12 @@ function openSettings() {
                     <div class="settings-row">
                         <div>
                             <div class="settings-row-title">Backup your data</div>
-                            <div class="settings-row-sub">Export or import trades, watchlist, and notes.</div>
+                            <div class="settings-row-sub">Export/import Live↔Paper. Clear only wipes the account you’re on.</div>
                         </div>
-                        <div style="display:flex; gap:0.5rem;">
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
                             <button type="button" class="data-backup-btn" style="width:auto;" onclick="exportJournalData()">Export</button>
                             <button type="button" class="data-backup-btn" style="width:auto;" onclick="importJournalData()">Import</button>
+                            <button type="button" class="data-backup-btn" style="width:auto; border-color:#e74c3c; color:#ff8a80;" onclick="clearCurrentAccountData()">Clear current account</button>
                         </div>
                     </div>
                 </div>
