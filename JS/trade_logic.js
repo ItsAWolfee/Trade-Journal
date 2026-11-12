@@ -434,6 +434,25 @@ function getJournalBackupPayload() {
     };
 }
 
+/** Backup for Export Data — only the account you are currently viewing. */
+function getCurrentAccountBackupPayload() {
+    const mode = getAccountMode();
+    const goalsKey = mode === 'paper' ? 'tradeJournalPaperEarningsGoals' : 'tradeJournalEarningsGoals';
+    return {
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        singleAccount: true,
+        sourceAccount: mode,
+        accountMode: mode,
+        // Always put this profile’s data in the primary fields so import into Live or Paper works the same
+        trades: readTradesFromStorage(mode),
+        deposits: JSON.parse(localStorage.getItem(depositsStorageKey(mode)) || '[]'),
+        earningsGoals: JSON.parse(localStorage.getItem(goalsKey) || 'null'),
+        watchlist: JSON.parse(localStorage.getItem('tradeJournalWatchlist') || 'null'),
+        tradingNotes: localStorage.getItem('tradingNotes') || ''
+    };
+}
+
 function normalizeTradeList(list) {
     return (list || []).map(t => {
         if (!t.id) t.id = Date.now() + Math.random().toString(36).substr(2, 9);
@@ -494,12 +513,14 @@ function applyJournalBackup(payload, options = {}) {
     const liveDeposits = Array.isArray(payload.deposits) ? payload.deposits : null;
     const paperDeposits = Array.isArray(payload.paperDeposits) ? payload.paperDeposits : null;
 
-    // Allow Live↔Paper: if importing into paper but backup only has live trades (or reverse), use that list
+    // Single-account exports always use primary `trades`/`deposits`. Dual backups prefer matching side, then fall back.
     const sourceTradesFor = (dest) => {
+        if (payload.singleAccount) return liveList || paperList || [];
         if (dest === 'live') return liveList || paperList || [];
         return paperList || liveList || [];
     };
     const sourceDepositsFor = (dest) => {
+        if (payload.singleAccount) return liveDeposits || paperDeposits || [];
         if (dest === 'live') return liveDeposits || paperDeposits || [];
         return paperDeposits || liveDeposits || [];
     };
@@ -553,17 +574,23 @@ function applyJournalBackup(payload, options = {}) {
 }
 
 window.exportJournalData = function exportJournalData() {
-    const payload = getJournalBackupPayload();
+    const mode = getAccountMode();
+    const label = mode === 'paper' ? 'Paper' : 'Live';
+    const payload = getCurrentAccountBackupPayload();
+    const count = Array.isArray(payload.trades) ? payload.trades.length : 0;
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `trade-journal-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `trade-journal-${mode}-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    showAlert('Your trades, watchlist, and notes were saved to a backup file.', 'Export Complete');
+    showAlert(
+        `Exported ${count} ${label} trade${count === 1 ? '' : 's'} (only the account you’re on). Import will load into whichever account you’re viewing.`,
+        'Export Complete'
+    );
 };
 
 // --- Git-based data sync (so your phone shows the data you push from your PC) ---
@@ -823,28 +850,21 @@ window.handleJournalImport = async function handleJournalImport(event) {
 
         const liveCount = Array.isArray(payload.trades) ? payload.trades.length : 0;
         const paperCount = Array.isArray(payload.paperTrades) ? payload.paperTrades.length : 0;
-        const total = liveCount + paperCount;
-        if (!total && !Array.isArray(payload.trades) && !Array.isArray(payload.paperTrades)) {
+        // Single-account exports put everything in `trades`; older dual backups may have both
+        const importCount = payload.singleAccount
+            ? liveCount
+            : (liveCount || paperCount);
+        if (!liveCount && !paperCount && !Array.isArray(payload.trades) && !Array.isArray(payload.paperTrades)) {
             throw new Error('Invalid backup file');
         }
 
         const current = getAccountMode();
-        const destRaw = await showPrompt(
-            `Backup has ${liveCount} live + ${paperCount} paper trade(s).\n\nImport into which account?\nType one of:\n• current  (right now: ${current})\n• live\n• paper\n• both\n\nUse current to put Live data onto Paper (or reverse) without switching accounts.`,
-            'current',
-            'Import Destination'
-        );
-        if (destRaw == null) {
-            event.target.value = '';
-            return;
-        }
-        const dest = String(destRaw).toLowerCase().trim();
-        const target = ['current', 'live', 'paper', 'both'].includes(dest) ? dest : 'current';
+        const label = current === 'paper' ? 'Paper' : 'Live';
+        const from = payload.sourceAccount === 'paper' ? 'Paper' : (payload.sourceAccount === 'live' ? 'Live' : null);
+        const fromNote = from && from !== label ? ` (from a ${from} export)` : '';
 
         const replace = await showConfirm(
-            target === 'both'
-                ? `Replace BOTH Live and Paper account data from this backup?`
-                : `Replace your ${target === 'current' ? current : target} account data with this backup? The other account stays as-is.`,
+            `Replace your ${label} account with this backup (${importCount || liveCount + paperCount} trade${(importCount || liveCount + paperCount) === 1 ? '' : 's'})${fromNote}?\n\nYour other account stays as-is.`,
             'Import Backup'
         );
         if (!replace) {
@@ -852,9 +872,8 @@ window.handleJournalImport = async function handleJournalImport(event) {
             return;
         }
 
-        const applied = applyJournalBackup(payload, { target });
-        const label = applied === 'both' ? 'both accounts' : `${applied} account`;
-        showAlert(`Imported into ${label}. You stayed on ${current}.`, 'Import Complete');
+        applyJournalBackup(payload, { target: 'current' });
+        showAlert(`Imported into ${label}. Your other account was not changed.`, 'Import Complete');
     } catch (err) {
         console.error(err);
         showAlert('Could not read that file. Make sure it is a Trade Journal backup (.json).', 'Import Failed');
@@ -2951,7 +2970,7 @@ function openSettings() {
                     <div class="settings-row">
                         <div>
                             <div class="settings-row-title">Backup your data</div>
-                            <div class="settings-row-sub">Export/import Live↔Paper. Clear only wipes the account you’re on.</div>
+                            <div class="settings-row-sub">Export/import only the account you’re on. Clear only wipes that account too.</div>
                         </div>
                         <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
                             <button type="button" class="data-backup-btn" style="width:auto;" onclick="exportJournalData()">Export</button>
